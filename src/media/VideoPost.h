@@ -4,6 +4,9 @@
 
 #pragma once
 #include "VideoFrame.h"
+extern "C"{
+#include <libavutil/avutil.h>
+}
 #include <queue>
 #include <mutex>
 #include <chrono>
@@ -23,17 +26,19 @@ public:
     void setCopyBackRender(bool copyBackRender);
 
     void pushVideoFrame(const AVFrame* frame);
-    VideoFramePtr getVideoFrame();
+    VideoFramePtr popVideoFrame();
     void clear();
 
     // 立即退出等待（例如外部停止渲染时调用）
     void setStopFlag(bool stop);
 
-    double waterLevel() const { return m_waterLevel; }
+    int64_t waterLevel() const { return m_waterLevel; }
 
-    void setTimeBase(const Rational& timeBase) { m_timeBase = timeBase; }
+    void setTimeBase(const AVRational& timeBase) { m_timeBase = timeBase; }
 
-    void setStartTimePoint(const std::chrono::steady_clock::time_point& timePoint) { m_startTimePoint = timePoint; }
+    void setStartTimePoint(const std::chrono::steady_clock::time_point& timePoint);
+
+    bool isQueueEmpty();
 
 private:
     VideoFramePtr copyFrame(const AVFrame* frame);
@@ -44,7 +49,7 @@ private:
     double m_fps{0};
     bool m_copyBackRender{true};
 
-    double m_waterLevel{-1};
+    int64_t m_waterLevel{-1};
 
     std::queue<VideoFramePtr> m_videoFrameQueue;
     std::mutex m_mutex;
@@ -63,9 +68,10 @@ private:
     std::chrono::steady_clock::time_point m_lastOutputTime{};
     bool m_hasLastOutputTime{false};
 
-    Rational m_timeBase{1, 1000};
+    AVRational m_timeBase{1, 1000000};
     std::chrono::steady_clock::time_point m_startTimePoint;
     int64_t m_basePts{0};
+    std::atomic_bool m_startTimePointSet{false};
 };
 
 } // namespace media

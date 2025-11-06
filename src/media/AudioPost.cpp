@@ -7,12 +7,13 @@
 #include "MediaUtils.h"
 extern "C"{
 #include <libswresample/swresample.h>
+#include <libavutil/avutil.h>
 }
 
 namespace media {
-constexpr int HIGH_WATER_MARK = 900; // 单位：毫秒
-constexpr int LOW_WATER_MARK = 300;
-constexpr int HIGHEST_WATER_MARK = 1500;
+constexpr int64_t HIGH_WATER_MARK_US = 900000; // 单位：微秒
+constexpr int64_t LOW_WATER_MARK_US = 300000;
+constexpr int64_t HIGHEST_WATER_MARK_US = 1500000;
 constexpr AVSampleFormat TARGET_SAMPLE_FORMAT = AV_SAMPLE_FMT_S16;
 
 AudioPost::~AudioPost()
@@ -23,7 +24,7 @@ AudioPost::~AudioPost()
     }
 }
 
-bool AudioPost::pushAudioFrame(const AVFrame* frame, double videoWaterLevel)
+bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
 {
     auto audioFrame = resampleAudioFrame(frame);
     if (!audioFrame) {
@@ -32,29 +33,29 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, double videoWaterLevel)
     }
 
     std::unique_lock lock(m_mutex);
-    m_waterLevelMs += audioFrame->duration();
+    m_waterLevelUs += audioFrame->duration();
     auto isWait = [=, this]() {
         if (m_stopFlag) {
             return false;
         }
 
-        if (m_waterLevelMs > HIGHEST_WATER_MARK) {
+        if (m_waterLevelUs > HIGHEST_WATER_MARK_US) {
             return true;
         }
 
-        if (m_waterLevelMs > HIGH_WATER_MARK && (videoWaterLevel > LOW_WATER_MARK || videoWaterLevel < 0)) {
+        if (m_waterLevelUs > HIGH_WATER_MARK_US && (videoWaterLevelUs > LOW_WATER_MARK_US || videoWaterLevelUs < 0)) {
             return true;
         }
         return false;
     };
     while (isWait()) {
-        m_condVar.wait(lock);
+        m_condVar.wait_for(lock, std::chrono::milliseconds(100));
     }
 
     if (m_stopFlag) {
         return false;
     }
-    // NEAPU_LOGD("Pushed audio frame: duration={}, Water level: {}", audioFrame->duration(), m_waterLevelMs);
+    // NEAPU_LOGD("Pushed audio frame: duration(us)={}, Water level(us): {}", audioFrame->duration(), m_waterLevelUs);
     m_audioFrameQueue.push(std::move(audioFrame));
 
     return true;
@@ -62,22 +63,16 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, double videoWaterLevel)
 
 AudioFramePtr AudioPost::popAudioFrame()
 {
-    // std::lock_guard lock(m_mutex);
-    // if (m_audioFrameQueue.empty()) {
-    //     return nullptr;
-    // }
-    //
-    // auto frame = std::move(m_audioFrameQueue.front());
-    // m_audioFrameQueue.pop();
-    // m_waterLevelMs -= frame->duration();
-    // m_condVar.notify_all();
-    // return frame;
+    if (m_stopFlag || !m_startTimePointSet) {
+        return nullptr;
+    }
 
     auto popFrame = [this]() -> AudioFramePtr {
         auto audioFrame = std::move(m_audioFrameQueue.front());
         m_audioFrameQueue.pop();
-        m_waterLevelMs -= audioFrame->duration();
+        m_waterLevelUs -= audioFrame->duration();
         m_condVar.notify_all();
+        NEAPU_LOGD("Pop audio. pts: {}", audioFrame->pts());
         return audioFrame;
     };
 
@@ -86,30 +81,38 @@ AudioFramePtr AudioPost::popAudioFrame()
     if (m_audioFrameQueue.empty()) {
         return nullptr;
     }
-    const auto& frame = m_audioFrameQueue.front();
-    targetPts = frame->pts();
+    
+    if (!m_hasWaitedFirstFrame) {
+        const auto& frame = m_audioFrameQueue.front();
+        targetPts = frame->pts();
 
-    // 计算m_startTimePoint+pts为目标时间点
-    using clock = std::chrono::steady_clock;
-    const auto now = clock::now();
-    const auto targetTimePoint = m_startTimePoint + std::chrono::milliseconds(targetPts);
-    if (targetTimePoint < now) {
-        // 目标时间点已过，直接弹出
-        return popFrame();
-    }
-
-    const auto waitDuration = targetTimePoint - now;
-    // 等待直到目标时间点或收到中断/停止信号
-    while (!m_stopFlag) {
-        if (m_waitCondVar.wait_for(lock, waitDuration) == std::cv_status::timeout) {
-            break;
+        // 仅在首帧按照起始时间点等待，后续帧不等待直接吐出
+        using clock = std::chrono::steady_clock;
+        const auto now = clock::now();
+        const auto targetTimePoint = m_startTimePoint + std::chrono::microseconds(targetPts);
+        if (targetTimePoint < now) {
+            // 目标时间点已过，直接弹出
+            m_hasWaitedFirstFrame = true;
+            return popFrame();
         }
-    }
-    if (m_stopFlag) {
-        return nullptr;
-    } else {
+
+        const auto waitDuration = targetTimePoint - now;
+        // 等待直到目标时间点或收到中断/停止信号
+        while (!m_stopFlag) {
+            if (m_waitCondVar.wait_for(lock, waitDuration) == std::cv_status::timeout) {
+                break;
+            }
+        }
+        if (m_stopFlag) {
+            return nullptr;
+        }
+
+        m_hasWaitedFirstFrame = true;
         return popFrame();
     }
+
+    // 非首帧：不等待，直接吐帧
+    return popFrame();
 }
 
 void AudioPost::clear()
@@ -124,11 +127,32 @@ void AudioPost::clear()
         m_audioFrameQueue.pop();
     }
 
-    m_waterLevelMs = 0;
+    m_waterLevelUs = 0;
     m_basePts = 0;
-    m_timeBase = {0, 1000};
+    m_stopFlag = true;
+    m_startTimePointSet = false;
+    m_hasWaitedFirstFrame = false;
+}
+void AudioPost::setStopFlag(bool stop)
+{
+    m_stopFlag = stop;
+    m_condVar.notify_all();
+    m_waitCondVar.notify_all();
 }
 
+void AudioPost::setStartTimePoint(const std::chrono::steady_clock::time_point& timePoint)
+{
+    m_startTimePoint = timePoint;
+    m_startTimePointSet = true;
+    m_hasWaitedFirstFrame = false;
+    NEAPU_LOGD_STREAM << "Set start time point: " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(timePoint.time_since_epoch()).count();
+}
+bool AudioPost::isQueueEmpty()
+{
+    std::lock_guard lock(m_mutex);
+    return m_audioFrameQueue.empty();
+}
 bool AudioPost::initSwrContext(const AVFrame* frame)
 {
     NEAPU_FUNC_TRACE;
@@ -211,11 +235,12 @@ AudioFramePtr AudioPost::resampleAudioFrame(const AVFrame* frame)
     int64_t pts = 0;
     if (frame->pts == AV_NOPTS_VALUE) {
         pts = m_basePts;
-        m_basePts += frame->nb_samples * m_timeBase.den / (frame->sample_rate * frame->ch_layout.nb_channels * m_timeBase.num);
+        // 使用 nb_samples / sample_rate -> 微秒
+        m_basePts += av_rescale_q(frame->nb_samples, AVRational{1, frame->sample_rate}, AV_TIME_BASE_Q);
     } else if (frame->time_base.num != 0) {
-        pts = av_rescale_q(frame->pts, frame->time_base, AVRational{1, 1000});
+        pts = av_rescale_q(frame->pts, frame->time_base, AV_TIME_BASE_Q);
     } else {
-        pts = av_rescale_q(frame->pts, {m_timeBase.num, m_timeBase.den}, AVRational{1, 1000});
+        pts = av_rescale_q(frame->pts, m_timeBase, AV_TIME_BASE_Q);
     }
 
     if (m_swrCtx) {

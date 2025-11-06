@@ -62,6 +62,7 @@ bool VideoDecoder::initialize(const AVStream* stream, const HWAccelConfig& confi
         return false;
     }
 
+    m_hwConfig = config;
     if (!initializeHWAccel(config.type)) {
         NEAPU_LOGE("Failed to initialize HW acceleration");
         avcodec_free_context(&m_codecCtx);

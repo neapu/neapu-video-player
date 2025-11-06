@@ -45,6 +45,11 @@ void VideoRenderer::stop()
     if (m_recvFrameThread.joinable()) {
         m_recvFrameThread.join();
     }
+
+    m_currentFrame.reset();
+    m_currentWidth = 0;
+    m_currentHeight = 0;
+    m_currentPixelFormat = media::VideoFrame::PixelFormat::NONE;
 }
 void VideoRenderer::initialize(QRhiCommandBuffer* cb)
 {
@@ -59,6 +64,30 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
     }
 
     NEAPU_LOGI("Initializing video renderer");
+
+#ifdef _WIN32
+    if (m_rhi->backend() == QRhi::D3D11) {
+        auto* nativeHandle = reinterpret_cast<const QRhiD3D11NativeHandles*>(m_rhi->nativeHandles());
+        if (nativeHandle) {
+            m_d3d11Device = static_cast<ID3D11Device*>(nativeHandle->dev);
+            m_d3d11DeviceContext = static_cast<ID3D11DeviceContext*>(nativeHandle->context);
+
+            Microsoft::WRL::ComPtr<ID3D10Multithread> mt;
+            if (SUCCEEDED(m_d3d11Device->QueryInterface(__uuidof(ID3D10Multithread), reinterpret_cast<void**>(mt.GetAddressOf())))) {
+                mt->SetMultithreadProtected(TRUE);
+            } else {
+                NEAPU_LOGE("Failed to enable multithread protection on D3D11 device");
+                return;
+            }
+            NEAPU_LOGI("Obtained D3D11 device and context from QRhi");
+        } else {
+            NEAPU_LOGE("Failed to obtain native handles from QRhi for D3D11");
+            return;
+        }
+    } else {
+        NEAPU_LOGW("QRhi backend is not D3D11, current backend: {}", static_cast<int>(m_rhi->backend()));
+    }
+#endif
 
     // 创建顶点缓冲区
     m_vertexBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(vertexData)));
@@ -81,6 +110,13 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
     m_vsUBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
     if (!m_vsUBuffer->create()) {
         NEAPU_LOGE("Failed to create uniform buffer");
+        return;
+    }
+
+    // 创建片段着色器的uniform缓冲区（16字节：ivec4 色彩参数）
+    m_fsUBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 16));
+    if (!m_fsUBuffer->create()) {
+        NEAPU_LOGE("Failed to create fragment uniform buffer");
         return;
     }
 
@@ -129,6 +165,14 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
     cb->setVertexInput(0, 1, vertexInput);
     cb->draw(4);
     cb->endPass();
+}
+ID3D11Device* VideoRenderer::d3d11Device() const
+{
+    return m_d3d11Device;
+}
+ID3D11DeviceContext* VideoRenderer::d3d11DeviceContext() const
+{
+    return m_d3d11DeviceContext;
 }
 void VideoRenderer::recvFrameThread()
 {
@@ -192,7 +236,17 @@ QString VideoRenderer::getFragmentShaderName()
 
     if (m_currentFrame->pixelFormat() == D3D11) {
 #ifdef _WIN32
-        // TODO: 实现 D3D11 纹理的渲染
+        if (!m_d3d11Texture) return ":/shaders/none.frag.qsb";
+        D3D11_TEXTURE2D_DESC desc;
+        m_d3d11Texture->GetDesc(&desc);
+        if (desc.Format == DXGI_FORMAT_NV12) {
+            return ":/shaders/nv12.frag.qsb";
+        } else if (desc.Format == DXGI_FORMAT_P010) {
+            return ":/shaders/p010.frag.qsb";
+        } else {
+            NEAPU_LOGE("Unsupported D3D11 texture format: {}", static_cast<int>(desc.Format));
+            return ":/shaders/none.frag.qsb";
+        }
 #endif
     }
 
@@ -216,6 +270,9 @@ bool VideoRenderer::updateTexture(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch
         if (!createPipeline()) {
             return false;
         }
+
+        // 色彩空间通常在换源时变化，重建时更新一次片段uniform即可
+        updateFragmentUniforms(cb, rub);
 
         m_currentWidth = m_currentFrame->width();
         m_currentHeight = m_currentFrame->height();
@@ -277,16 +334,26 @@ void VideoRenderer::updateVertexUniforms(QRhiCommandBuffer* cb, QRhiResourceUpda
         }
     }
 
+    NEAPU_LOGD("VideoRenderer::updateVertexUniforms: scaleX={}, scaleY={}", scaleX, scaleY);
     mvp.scale(scaleX, scaleY);
 
     rub->updateDynamicBuffer(m_vsUBuffer.get(), 0, 64, mvp.constData());
 }
+
+void VideoRenderer::updateFragmentUniforms(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch* rub)
+{
+    struct Params { int x; int y; int z; int w; } p{m_colorSpace, m_colorRange, m_colorTransfer, 0};
+    rub->updateDynamicBuffer(m_fsUBuffer.get(), 0, sizeof(Params), &p);
+}
 bool VideoRenderer::createTextures()
 {
-    NEAPU_FUNC_TRACE;
     if (!m_currentFrame) {
         return false;
     }
+
+    m_colorSpace = static_cast<int>(m_currentFrame->colorSpace());
+    m_colorRange = static_cast<int>(m_currentFrame->colorRange());
+    m_colorTransfer = static_cast<int>(m_currentFrame->colorTransfer());
 
     using enum media::VideoFrame::PixelFormat;
     switch (m_currentFrame->pixelFormat()) {
@@ -329,6 +396,7 @@ bool VideoRenderer::createYUVTextures()
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, m_uTexture.get(), m_sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage, m_vTexture.get(), m_sampler.get()),
         QRhiShaderResourceBinding::uniformBuffer(3, QRhiShaderResourceBinding::VertexStage, m_vsUBuffer.get()),
+        QRhiShaderResourceBinding::uniformBuffer(4, QRhiShaderResourceBinding::FragmentStage, m_fsUBuffer.get()),
     });
     if (!m_srb->create()) {
         NEAPU_LOGE("Failed to create shader resource bindings for YUV420P textures");
@@ -343,7 +411,74 @@ bool VideoRenderer::createYUVTextures()
 
 bool VideoRenderer::createD3D11Texture()
 {
-    // TODO: 实现 D3D11 纹理的创建
+    NEAPU_FUNC_TRACE;
+#ifdef _WIN32
+    if (!m_currentFrame || !m_currentFrame->getD3D11Texture()) {
+        return false;
+    }
+
+    auto* srcTexture = m_currentFrame->getD3D11Texture();
+    D3D11_TEXTURE2D_DESC desc;
+    srcTexture->GetDesc(&desc);
+    if (desc.Format != DXGI_FORMAT_NV12 && desc.Format != DXGI_FORMAT_P010) {
+        NEAPU_LOGE("Unsupported D3D11 texture format: {}", static_cast<int>(desc.Format));
+        return false;
+    }
+
+    m_d3d11Texture.Reset();
+    HRESULT hr = m_d3d11Device->CreateTexture2D(&desc, nullptr, m_d3d11Texture.GetAddressOf());
+    if (FAILED(hr)) {
+        NEAPU_LOGE("Failed to create D3D11 texture: HRESULT={}", hr);
+        return false;
+    }
+
+    // 创建QRhi包装纹理
+    QRhiTexture::NativeTexture nativeTex{};
+    nativeTex.object = reinterpret_cast<quint64>(m_d3d11Texture.Get());
+    nativeTex.layout = 0; // 未使用
+
+    if (desc.Format == DXGI_FORMAT_NV12) {
+        m_yTexture.reset(m_rhi->newTexture(
+            QRhiTexture::R8, QSize(m_currentFrame->width(), m_currentFrame->height()), 1,
+            QRhiTexture::Flags()));
+        m_uvTexture.reset(m_rhi->newTexture(
+            QRhiTexture::RG8, QSize(m_currentFrame->width() / 2, m_currentFrame->height() / 2), 1,
+            QRhiTexture::Flags()));
+    } else if (desc.Format == DXGI_FORMAT_P010) {
+        m_yTexture.reset(m_rhi->newTexture(
+            QRhiTexture::R16, QSize(m_currentFrame->width(), m_currentFrame->height()), 1,
+            QRhiTexture::Flags()));
+        m_uvTexture.reset(m_rhi->newTexture(
+            QRhiTexture::RG16, QSize(m_currentFrame->width() / 2, m_currentFrame->height() / 2), 1,
+            QRhiTexture::Flags()));
+    } else {
+        return false;
+    }
+
+    if (!m_yTexture->createFrom(nativeTex) || !m_uvTexture->createFrom(nativeTex)) {
+        NEAPU_LOGE("Failed to create QRhi D3D11 textures");
+        m_yTexture.reset();
+        m_uvTexture.reset();
+        m_d3d11Texture.Reset();
+        return false;
+    }
+
+    m_srb.reset(m_rhi->newShaderResourceBindings());
+    m_srb->setBindings({
+        QRhiShaderResourceBinding::sampledTexture(0, QRhiShaderResourceBinding::FragmentStage, m_yTexture.get(), m_sampler.get()),
+        QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, m_uvTexture.get(), m_sampler.get()),
+        QRhiShaderResourceBinding::uniformBuffer(3, QRhiShaderResourceBinding::VertexStage, m_vsUBuffer.get()),
+        QRhiShaderResourceBinding::uniformBuffer(4, QRhiShaderResourceBinding::FragmentStage, m_fsUBuffer.get()),
+    });
+    if (!m_srb->create()) {
+        NEAPU_LOGE("Failed to create shader resource bindings for D3D11 textures");
+        m_yTexture.reset();
+        m_uvTexture.reset();
+        m_d3d11Texture.Reset();
+        return false;
+    }
+    return true;
+#endif
     return false;
 }
 
@@ -413,7 +548,16 @@ bool VideoRenderer::updateYUVTextures(QRhiCommandBuffer* cb, QRhiResourceUpdateB
 }
 bool VideoRenderer::updateD3D11Texture(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch* rub)
 {
-    // TODO: 实现 D3D11 纹理的更新
+#ifdef _WIN32
+    if (!m_currentFrame || !m_currentFrame->getD3D11Texture()) {
+        return false;
+    }
+
+    m_d3d11DeviceContext->CopyResource(m_d3d11Texture.Get(), m_currentFrame->getD3D11Texture());
+    m_currentFrame.reset();
+
+    return true;
+#endif
     return false;
 }
 

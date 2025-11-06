@@ -46,29 +46,33 @@ void VideoPost::pushVideoFrame(const AVFrame* frame)
     }
 
     std::lock_guard lock(m_mutex);
-    auto duration = videoFrame->duration();
-    if (duration <= 0) {
+    int64_t durationUs = videoFrame->duration();
+    if (durationUs <= 0) {
         if (m_fps > 0) {
-            duration = 1000.0 / m_fps;
+            durationUs = static_cast<int64_t>(1000000.0 / m_fps + 0.5); // 约等于 1e6/fps 微秒
         } else {
-            duration = 40; // 默认25fps
+            durationUs = 40000; // 默认25fps -> 40ms
         }
     }
-    m_waterLevel += duration;
+    m_waterLevel += durationUs;
     if (videoFrame->pts() < 0) {
         videoFrame->setPts(m_basePts);
-        m_basePts += static_cast<int64_t>(duration);
+        m_basePts += durationUs;
     }
     m_videoFrameQueue.push(std::move(videoFrame));
 }
 
-VideoFramePtr VideoPost::getVideoFrame()
+VideoFramePtr VideoPost::popVideoFrame()
 {
+    if (m_stopFlag || !m_startTimePointSet) {
+        return nullptr;
+    }
     auto popFrame = [this]() -> VideoFramePtr {
-        auto audioFrame = std::move(m_videoFrameQueue.front());
+        auto videoFrame = std::move(m_videoFrameQueue.front());
         m_videoFrameQueue.pop();
-        m_waterLevel -= audioFrame->duration();
-        return audioFrame;
+        m_waterLevel -= videoFrame->duration();
+        NEAPU_LOGD("Pop video. pts: {}", videoFrame->pts());
+        return videoFrame;
     };
 
     int64_t targetPts = 0;
@@ -83,7 +87,7 @@ VideoFramePtr VideoPost::getVideoFrame()
     // 计算m_startTimePoint+pts为目标时间点
     using clock = std::chrono::steady_clock;
     const auto now = clock::now();
-    const auto targetTimePoint = m_startTimePoint + std::chrono::milliseconds(targetPts);
+    const auto targetTimePoint = m_startTimePoint + std::chrono::microseconds(targetPts);
     if (targetTimePoint < now) {
         // 目标时间点已过，直接弹出
         return popFrame();
@@ -112,6 +116,8 @@ void VideoPost::clear()
     m_waterLevel = -1.0;
     // 重置吐帧时间
     m_hasLastOutputTime = false;
+    m_stopFlag = true;
+    m_startTimePointSet = false;
 }
 
 void VideoPost::setStopFlag(bool stop)
@@ -120,6 +126,18 @@ void VideoPost::setStopFlag(bool stop)
     m_waitCondVar.notify_all();
 }
 
+void VideoPost::setStartTimePoint(const std::chrono::steady_clock::time_point& timePoint)
+{
+    m_startTimePoint = timePoint;
+    m_startTimePointSet = true;
+    NEAPU_LOGD_STREAM << "Set start time point: " 
+        << std::chrono::duration_cast<std::chrono::milliseconds>(timePoint.time_since_epoch()).count();
+}
+bool VideoPost::isQueueEmpty()
+{
+    std::lock_guard lock(m_mutex);
+    return m_videoFrameQueue.empty();
+}
 VideoFramePtr VideoPost::copyFrame(const AVFrame* frame)
 {
     if (!frame) {

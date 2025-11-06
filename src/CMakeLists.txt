@@ -14,6 +14,8 @@ qt_add_shaders(${EXE_NAME} "shaders"
         shaders/video.vert
         shaders/none.frag
         shaders/yuv420p.frag
+        shaders/nv12.frag
+        shaders/p010.frag
 )
 
 add_subdirectory(media)

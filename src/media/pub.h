@@ -19,8 +19,4 @@ struct OpenMediaParams {
     ID3D11DeviceContext* d3d11DeviceContext{nullptr};
 #endif
 };
-struct Rational {
-    int num{0};
-    int den{1};
-};
 }

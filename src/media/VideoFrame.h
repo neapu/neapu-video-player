@@ -5,6 +5,9 @@
 #pragma once
 #include <memory>
 #include "pub.h"
+extern "C"{
+#include <libavutil/avutil.h>
+}
 #ifdef _WIN32
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -38,7 +41,7 @@ public:
 
     ~VideoFrame();
 
-    static std::unique_ptr<VideoFrame> fromAVFrame(const void* frame, Rational timeBase);
+    static std::unique_ptr<VideoFrame> fromAVFrame(const void* frame, AVRational timeBase);
 
     uint8_t* y() const { return m_yData; }
     uint8_t* u() const { return m_uData; }
@@ -49,11 +52,15 @@ public:
     int width() const { return m_width; }
     int height() const { return m_height; }
 
-    double duration() const { return m_duration; }
+    int64_t duration() const { return m_durationUs; }
     int64_t pts() const { return m_pts; }
     void setPts(int64_t pts) { m_pts = pts; }
 
     PixelFormat pixelFormat() const { return m_pixelFormat; }
+
+    ColorSpace colorSpace() const { return m_colorSpace; }
+    ColorRange colorRange() const { return m_colorRange; }
+    ColorTransfer colorTransfer() const { return m_colorTransfer; }
 
 #ifdef _WIN32
     ID3D11Texture2D* getD3D11Texture() const { return d3d11Texture.Get(); }
@@ -71,7 +78,7 @@ private:
 
     PixelFormat m_pixelFormat{PixelFormat::YUV420P};
 
-    double m_duration{0};
+    int64_t m_durationUs{0};
     int64_t m_pts{0};
 
     ColorRange m_colorRange{ColorRange::LIMITED};

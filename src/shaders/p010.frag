@@ -3,15 +3,16 @@
 layout(location = 0) in vec2 vTexCoord;
 layout(location = 0) out vec4 fragColor;
 
+// P010 通常是两平面：Y（16位），UV交织（16位、降采样）
+// 这里假设QRhi创建的纹理为标准归一化采样，读出为[0,1]范围
 layout(binding = 0) uniform sampler2D yTexture;
-layout(binding = 1) uniform sampler2D uTexture;
-layout(binding = 2) uniform sampler2D vTexture;
+layout(binding = 1) uniform sampler2D uvTexture;
 
 layout(std140, binding = 4) uniform ColorParams {
-    ivec4 u_color; // x:space(0/1/2), y:range(0/1), z:transfer(0/1/2)
+    ivec4 u_color; // x:space, y:range, z:transfer(预留)
 };
 
-// ---- 可读性更好的常量与工具函数 ----
+// ---- 常量与工具函数 ----
 const int CS_BT601  = 0;
 const int CS_BT709  = 1;
 const int CS_BT2020 = 2;
@@ -19,7 +20,7 @@ const int CS_BT2020 = 2;
 const int RANGE_LIMITED = 0;
 const int RANGE_FULL    = 1;
 
-const float Y_OFFSET_LIMITED = 0.0625; // 16/255
+const float Y_OFFSET_LIMITED = 0.0625; // 16/255 对应归一化偏移
 const float UV_OFFSET        = 0.5;    // 中心偏移
 
 // LIMITED 范围的转换矩阵（列主序）
@@ -61,37 +62,33 @@ mat3 selectConvMatrix(int cs, int range)
     if (range == RANGE_LIMITED) {
         if (cs == CS_BT601)  return CONV_601_LIMITED;
         if (cs == CS_BT709)  return CONV_709_LIMITED;
-        /* default to BT.2020 */
         return CONV_2020_LIMITED;
     } else {
         if (cs == CS_BT601)  return CONV_601_FULL;
         if (cs == CS_BT709)  return CONV_709_FULL;
-        /* default to BT.2020 */
         return CONV_2020_FULL;
     }
 }
 
 vec3 saturate(vec3 v) { return clamp(v, 0.0, 1.0); }
 
-
 void main()
 {
+    // 采样16位归一化纹理，得到[0,1]
     float y = texture(yTexture, vTexCoord).r;
-    float u = texture(uTexture, vTexCoord).r;
-    float v = texture(vTexture, vTexCoord).r;
+    vec2 uv = texture(uvTexture, vTexCoord).rg; // U=R, V=G
 
     int cs = u_color.x;
     int range = u_color.y;
 
     float Y = y;
-    float U = u - UV_OFFSET;
-    float V = v - UV_OFFSET;
+    float U = uv.x - UV_OFFSET;
+    float V = uv.y - UV_OFFSET;
     if (range == RANGE_LIMITED) {
         Y -= Y_OFFSET_LIMITED;
     }
 
     mat3 conv = selectConvMatrix(cs, range);
     vec3 rgb = saturate(conv * vec3(Y, U, V));
-
     fragColor = vec4(rgb, 1.0);
 }

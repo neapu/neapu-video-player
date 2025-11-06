@@ -89,6 +89,13 @@ void MainWindow::onOpenFile()
     };
     params.enableHWAccel = true;
     params.copyBackRender = true;
+#ifdef _WIN32
+    if (m_videoRenderer->d3d11Device() && m_videoRenderer->d3d11DeviceContext()) {
+        params.d3d11Device = m_videoRenderer->d3d11Device();
+        params.d3d11DeviceContext = m_videoRenderer->d3d11DeviceContext();
+        params.copyBackRender = false;
+    }
+#endif
     if (!m_player->openMedia(params)) {
         QMessageBox::critical(this, tr("Error"), tr("Failed to open media file."));
         NEAPU_LOGE("Failed to open media file: {}", params.url);

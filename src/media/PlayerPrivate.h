@@ -50,7 +50,7 @@ private:
     std::thread m_decodeThread;
     std::atomic<bool> m_stopFlag{false};
     std::atomic<bool> m_pause{false};
-    bool m_decodeFirstFrame{true};
+    std::atomic_bool m_startTimePointSet{false};
 };
 
 } // namespace media

@@ -66,12 +66,12 @@ void AudioRenderer::stop()
 }
 void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount)
 {
-    const auto requireSize = static_cast<size_t>(frameCount) * 2 * sizeof(int16_t); // 2 channels, 16 bits
+    const auto channels = static_cast<size_t>(pDevice->playback.channels);
+    const auto requireSize = static_cast<size_t>(frameCount) * channels * sizeof(int16_t);
     size_t copyOffset = 0;
     while (copyOffset < requireSize) {
         updateCurrentData();
         if (!m_currentData) {
-            // 数据拉取完毕，填充静音
             const size_t remainSize = requireSize - copyOffset;
             std::memset(static_cast<uint8_t*>(pOutput) + copyOffset, 0, remainSize);
             setPlaying(false);

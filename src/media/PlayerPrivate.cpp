@@ -23,6 +23,7 @@ bool PlayerPrivate::openMedia(const OpenMediaParams& params)
     }
 
     m_openParams = params;
+    m_startTimePointSet = false;
 
     const auto* audioStream = m_demuxer.audioStream();
     if (audioStream) {
@@ -67,11 +68,11 @@ void PlayerPrivate::play()
         return;
     }
 
+    m_audioPost.clear();
+    m_videoPost.clear();
     m_stopFlag = false;
     m_audioPost.setStopFlag(m_stopFlag);
     m_videoPost.setStopFlag(m_stopFlag);
-    m_audioPost.clear();
-    m_videoPost.clear();
 
     m_pause = false;
     m_decodeThread = std::thread(&PlayerPrivate::decodeThreadFunc, this);
@@ -93,11 +94,31 @@ void PlayerPrivate::stop()
 
 VideoFramePtr PlayerPrivate::getVideoFrame()
 {
-    return m_videoPost.getVideoFrame();
+    if (!m_startTimePointSet) {
+        if (m_videoPost.isQueueEmpty()) {
+            return nullptr;
+        }
+        if (m_startTimePointSet.exchange(true) == false) {
+            auto now = std::chrono::steady_clock::now();
+            m_audioPost.setStartTimePoint(now);
+            m_videoPost.setStartTimePoint(now);
+        }
+    }
+    return m_videoPost.popVideoFrame();
 }
 
 AudioFramePtr PlayerPrivate::getAudioFrame()
 {
+    if (!m_startTimePointSet) {
+        if (m_audioPost.isQueueEmpty()) {
+            return nullptr;
+        }
+        if (m_startTimePointSet.exchange(true) == false) {
+            auto now = std::chrono::steady_clock::now();
+            m_audioPost.setStartTimePoint(now);
+            m_videoPost.setStartTimePoint(now);
+        }
+    }
     return m_audioPost.popAudioFrame();
 }
 
@@ -127,22 +148,10 @@ void PlayerPrivate::decodeThreadFunc()
         }
 
         auto onAudioFrame = [this] (AVFrame* frame) {
-            if (m_decodeFirstFrame) {
-                const auto now = std::chrono::steady_clock::now();
-                m_audioPost.setStartTimePoint(now);
-                m_videoPost.setStartTimePoint(now);
-                m_decodeFirstFrame = false;
-            }
             m_audioPost.pushAudioFrame(frame, m_videoPost.waterLevel());
         };
 
         auto onVideoFrame = [this] (AVFrame* frame) {
-            if (m_decodeFirstFrame) {
-                const auto now = std::chrono::steady_clock::now();
-                m_audioPost.setStartTimePoint(now);
-                m_videoPost.setStartTimePoint(now);
-                m_decodeFirstFrame = false;
-            }
             m_videoPost.pushVideoFrame(frame);
             // std::this_thread::sleep_for(std::chrono::milliseconds(20));
         };

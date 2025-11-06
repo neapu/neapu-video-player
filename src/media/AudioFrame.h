@@ -23,7 +23,7 @@ public:
     int channels() const { return m_channels; }
     int nbSamples() const { return m_nbSamples; }
 
-    double duration() const; // 单位：毫秒
+    int64_t duration() const; // 单位：微秒
     int64_t pts() const { return m_pts; }
 
 private:

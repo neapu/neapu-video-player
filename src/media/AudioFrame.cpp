@@ -3,6 +3,9 @@
 //
 
 #include "AudioFrame.h"
+extern "C"{
+#include <libavutil/avutil.h>
+}
 
 namespace media {
 AudioFrame::AudioFrame(const uint8_t* data, size_t len, int sampleRate, int channels, int nbSamples, int64_t pts)
@@ -22,11 +25,12 @@ AudioFrame::~AudioFrame()
         m_data = nullptr;
     }
 }
-double AudioFrame::duration() const
+int64_t AudioFrame::duration() const
 {
     if (m_sampleRate == 0 || m_channels == 0) {
-        return 0.;
+        return 0;
     }
-    return static_cast<double>(m_nbSamples) * 1000. / (m_sampleRate * m_channels);
+    // 每帧时长(微秒) = nb_samples / sample_rate * 1_000_000
+    return av_rescale_q(m_nbSamples, AVRational{1, m_sampleRate}, AV_TIME_BASE_Q);
 }
 } // namespace media

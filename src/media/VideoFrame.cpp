@@ -7,6 +7,7 @@
 #include "logger.h"
 extern "C" {
 #include <libavutil/frame.h>
+#include <libavutil/avutil.h>
 }
 
 namespace media {
@@ -25,7 +26,7 @@ VideoFrame::~VideoFrame()
         m_vData = nullptr;
     }
 }
-std::unique_ptr<VideoFrame> VideoFrame::fromAVFrame(const void* frame, Rational timeBase)
+std::unique_ptr<VideoFrame> VideoFrame::fromAVFrame(const void* frame, AVRational timeBase)
 {
     if (!frame) {
         return nullptr;
@@ -109,16 +110,16 @@ std::unique_ptr<VideoFrame> VideoFrame::fromAVFrame(const void* frame, Rational 
     ret->m_width = avFrame->width;
     ret->m_height = avFrame->height;
     if (avFrame->duration > 0 && avFrame->time_base.num > 0 && avFrame->time_base.den > 0) {
-        ret->m_duration = static_cast<double>(avFrame->duration) * 1000 * avFrame->time_base.num / avFrame->time_base.den;
+        ret->m_durationUs = av_rescale_q(avFrame->duration, avFrame->time_base, AV_TIME_BASE_Q);
     } else if (avFrame->duration > 0 && timeBase.den > 0) {
-        ret->m_duration = static_cast<double>(avFrame->duration) * 1000 * timeBase.num / timeBase.den;
+        ret->m_durationUs = av_rescale_q(avFrame->duration, timeBase, AV_TIME_BASE_Q);
     } else {
-        ret->m_duration = 0;
+        ret->m_durationUs = 0;
     }
     if (avFrame->pts != AV_NOPTS_VALUE && avFrame->time_base.den != 0 && avFrame->time_base.num != 0) {
-        ret->m_pts = avFrame->pts * 1000 * avFrame->time_base.num / avFrame->time_base.den;
+        ret->m_pts = av_rescale_q(avFrame->pts, avFrame->time_base, AV_TIME_BASE_Q);
     } else if (avFrame->pts != AV_NOPTS_VALUE && timeBase.den != 0) {
-        ret->m_pts = avFrame->pts * 1000 * timeBase.num / timeBase.den;
+        ret->m_pts = av_rescale_q(avFrame->pts, timeBase, AV_TIME_BASE_Q);
     } else {
         ret->m_pts = -1;
     }
