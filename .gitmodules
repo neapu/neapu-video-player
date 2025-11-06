@@ -1,0 +1,6 @@
+[submodule "first_party/logger"]
+	path = first_party/logger
+	url = https://github.com/neapu/logger.git
+[submodule "third_party/miniaudio"]
+	path = third_party/miniaudio
+	url = https://github.com/mackron/miniaudio.git
