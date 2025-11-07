@@ -69,12 +69,6 @@ void MainWindow::createLayout()
 }
 void MainWindow::onOpenFile()
 {
-    if (m_player->isOpen()) {
-        m_player->stop();
-        m_player->closeMedia();
-        m_videoRenderer->stop();
-        m_audioRenderer->stop();
-    }
     QString filter = tr(
             "Media Files (*.mp4 *.avi *.mkv *.mov *.webm *.flv *.mp3 *.flac *.aac *.wav *.ogg *.m4a *.opus);;"
             "Video Files (*.mp4 *.avi *.mkv *.mov *.webm *.flv);;"
@@ -83,6 +77,13 @@ void MainWindow::onOpenFile()
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Media File"), "", filter);
     if (filePath.isEmpty()) {
         return;
+    }
+
+    if (m_player->isOpen()) {
+        m_player->stop();
+        m_videoRenderer->stop();
+        m_audioRenderer->stop();
+        m_player->closeMedia();
     }
 
     media::OpenMediaParams params;
@@ -105,11 +106,14 @@ void MainWindow::onOpenFile()
         return;
     }
 
-    m_player->play();
     m_isDecodeOver = false;
-
     m_audioRenderer->start(m_player->audioSampleRate(), m_player->audioChannels());
     m_videoRenderer->start();
+
+    m_player->play();
+
+
+
 }
 void MainWindow::onAudioPlayingStateChanged(bool playing)
 {

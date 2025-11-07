@@ -54,6 +54,11 @@ void VideoRenderer::stop()
     m_currentWidth = 0;
     m_currentHeight = 0;
     m_currentPixelFormat = media::VideoFrame::PixelFormat::NONE;
+
+    QMetaObject::invokeMethod(this, [this]() {
+        createEmptyPipeline();
+        update();
+    });
 }
 void VideoRenderer::initialize(QRhiCommandBuffer* cb)
 {
@@ -124,15 +129,8 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
         return;
     }
 
-    // 创建着色器资源绑定，先不创建纹理，需要等到有视频帧后再创建
-    m_srb.reset(m_rhi->newShaderResourceBindings());
-    if (!m_srb->create()) {
-        NEAPU_LOGE("Failed to create shader resource bindings");
-        return;
-    }
-
     // 创建渲染管线
-    if (!createPipeline()) {
+    if (!createEmptyPipeline()) {
         NEAPU_LOGE("Failed to create graphics pipeline");
         return;
     }
@@ -227,6 +225,21 @@ bool VideoRenderer::createPipeline()
     }
     return true;
 }
+bool VideoRenderer::createEmptyPipeline()
+{
+    NEAPU_FUNC_TRACE;
+    m_srb.reset(m_rhi->newShaderResourceBindings());
+    // 仅绑定vs需要的uniform缓冲区
+    m_srb->setBindings({
+        QRhiShaderResourceBinding::uniformBuffer(3, QRhiShaderResourceBinding::VertexStage, m_vsUBuffer.get())
+    });
+    if (!m_srb->create()) {
+        NEAPU_LOGE("Failed to create empty shader resource bindings");
+        return false;
+    }
+
+    return createPipeline();
+}
 QString VideoRenderer::getFragmentShaderName()
 {
     if (!m_currentFrame) {
@@ -260,7 +273,7 @@ bool VideoRenderer::updateTexture(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch
 {
     std::lock_guard lock(m_frameMutex);
     if (!m_currentFrame) {
-        return false;
+        return true;
     }
 
     if (m_currentWidth != m_currentFrame->width() ||

@@ -50,6 +50,8 @@ void PlayerPrivate::closeMedia()
     NEAPU_FUNC_TRACE;
     m_audioDecoder.destroy();
     m_videoDecoder.destroy();
+    m_audioPost.destroy();
+    m_videoPost.destroy();
     m_demuxer.close();
 }
 
@@ -72,6 +74,7 @@ void PlayerPrivate::play()
         return;
     }
 
+    std::unique_lock lock(m_mutex);
     m_stopFlag = false;
     m_pause = false;
     m_decodeThread = std::thread(&PlayerPrivate::decodeThreadFunc, this);
@@ -80,6 +83,7 @@ void PlayerPrivate::play()
 void PlayerPrivate::stop()
 {
     NEAPU_FUNC_TRACE;
+    std::unique_lock lock(m_mutex);
     m_stopFlag = true;
     m_clock.stop();
     m_audioPost.clear();
@@ -91,22 +95,18 @@ void PlayerPrivate::stop()
 
 VideoFramePtr PlayerPrivate::getVideoFrame()
 {
-    if (!m_clock.isStarted()) {
-        if (m_videoPost.isQueueEmpty()) {
-            return nullptr;
-        }
-        m_clock.start();
+    std::shared_lock lock(m_mutex);
+    if (m_stopFlag) {
+        return nullptr;
     }
     return m_videoPost.popVideoFrame();
 }
 
 AudioFramePtr PlayerPrivate::getAudioFrame()
 {
-    if (!m_clock.isStarted()) {
-        if (m_audioPost.isQueueEmpty()) {
-            return nullptr;
-        }
-        m_clock.start();
+    std::shared_lock lock(m_mutex);
+    if (m_stopFlag) {
+        return nullptr;
     }
     return m_audioPost.popAudioFrame();
 }
@@ -137,12 +137,17 @@ void PlayerPrivate::decodeThreadFunc()
         }
 
         auto onAudioFrame = [this] (AVFrame* frame) {
+            if (!m_clock.isStarted()) {
+                m_clock.start();
+            }
             m_audioPost.pushAudioFrame(frame, m_videoPost.waterLevel());
         };
 
         auto onVideoFrame = [this] (AVFrame* frame) {
+            if (!m_clock.isStarted()) {
+                m_clock.start();
+            }
             m_videoPost.pushVideoFrame(frame);
-            // std::this_thread::sleep_for(std::chrono::milliseconds(20));
         };
 
         if (packet->stream_index == m_demuxer.audioStreamIndex()) {

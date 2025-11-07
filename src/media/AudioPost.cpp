@@ -27,12 +27,14 @@ AudioPost::~AudioPost()
 
 void AudioPost::initialize(AVRational timeBase)
 {
+    NEAPU_FUNC_TRACE;
     m_timeBase = timeBase;
     m_hasWaitedFirstFrame = true;
     m_initialized = true;
 }
 void AudioPost::destroy()
 {
+    NEAPU_FUNC_TRACE;
     m_initialized = false;
     m_condVar.notify_all();
 
@@ -199,6 +201,7 @@ bool AudioPost::initSwrContext(const AVFrame* frame)
         return false;
     }
 
+    NEAPU_LOGI("Initialized SwrContext for audio resampling");
     return true;
 }
 

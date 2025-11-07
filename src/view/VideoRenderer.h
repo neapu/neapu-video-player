@@ -39,6 +39,7 @@ signals:
 private:
     void recvFrameThread();
     bool createPipeline();
+    bool createEmptyPipeline();
     QString getFragmentShaderName();
     bool updateTexture(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch* rub);
     void updateVertexUniforms(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch* rub);

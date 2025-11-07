@@ -14,6 +14,7 @@
 #include <thread>
 #include <atomic>
 #include "Clock.h"
+#include <shared_mutex>
 
 namespace media {
 
@@ -53,7 +54,8 @@ private:
     VideoPost m_videoPost{m_clock};
 
     std::thread m_decodeThread;
-    std::atomic<bool> m_stopFlag{false};
+    std::shared_mutex m_mutex;
+    bool m_stopFlag{false};
     std::atomic<bool> m_pause{false};
 };
 
