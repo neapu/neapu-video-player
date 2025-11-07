@@ -9,6 +9,10 @@ extern "C" {
 #include <libavcodec/packet.h>
 }
 namespace media {
+PlayerPrivate::~PlayerPrivate()
+{
+    NEAPU_FUNC_TRACE;
+}
 bool PlayerPrivate::openMedia(const OpenMediaParams& params)
 {
     NEAPU_FUNC_TRACE;
@@ -23,7 +27,6 @@ bool PlayerPrivate::openMedia(const OpenMediaParams& params)
     }
 
     m_openParams = params;
-    m_startTimePointSet = false;
 
     const auto* audioStream = m_demuxer.audioStream();
     if (audioStream) {
@@ -31,7 +34,7 @@ bool PlayerPrivate::openMedia(const OpenMediaParams& params)
             NEAPU_LOGE("Failed to initialize audio decoder");
             return false;
         }
-        m_audioPost.setTimebase({audioStream->time_base.num, audioStream->time_base.den});
+        m_audioPost.initialize(audioStream->time_base);
     }
 
     const auto* videoStream = m_demuxer.videoStream();
@@ -44,6 +47,7 @@ bool PlayerPrivate::openMedia(const OpenMediaParams& params)
 
 void PlayerPrivate::closeMedia()
 {
+    NEAPU_FUNC_TRACE;
     m_audioDecoder.destroy();
     m_videoDecoder.destroy();
     m_demuxer.close();
@@ -68,12 +72,7 @@ void PlayerPrivate::play()
         return;
     }
 
-    m_audioPost.clear();
-    m_videoPost.clear();
     m_stopFlag = false;
-    m_audioPost.setStopFlag(m_stopFlag);
-    m_videoPost.setStopFlag(m_stopFlag);
-
     m_pause = false;
     m_decodeThread = std::thread(&PlayerPrivate::decodeThreadFunc, this);
 }
@@ -82,42 +81,32 @@ void PlayerPrivate::stop()
 {
     NEAPU_FUNC_TRACE;
     m_stopFlag = true;
-    m_audioPost.setStopFlag(m_stopFlag);
-    m_videoPost.setStopFlag(m_stopFlag);
+    m_clock.stop();
+    m_audioPost.clear();
+    m_videoPost.clear();
     if (m_decodeThread.joinable()) {
         m_decodeThread.join();
     }
-
-    m_audioPost.clear();
-    m_videoPost.clear();
 }
 
 VideoFramePtr PlayerPrivate::getVideoFrame()
 {
-    if (!m_startTimePointSet) {
+    if (!m_clock.isStarted()) {
         if (m_videoPost.isQueueEmpty()) {
             return nullptr;
         }
-        if (m_startTimePointSet.exchange(true) == false) {
-            auto now = std::chrono::steady_clock::now();
-            m_audioPost.setStartTimePoint(now);
-            m_videoPost.setStartTimePoint(now);
-        }
+        m_clock.start();
     }
     return m_videoPost.popVideoFrame();
 }
 
 AudioFramePtr PlayerPrivate::getAudioFrame()
 {
-    if (!m_startTimePointSet) {
+    if (!m_clock.isStarted()) {
         if (m_audioPost.isQueueEmpty()) {
             return nullptr;
         }
-        if (m_startTimePointSet.exchange(true) == false) {
-            auto now = std::chrono::steady_clock::now();
-            m_audioPost.setStartTimePoint(now);
-            m_videoPost.setStartTimePoint(now);
-        }
+        m_clock.start();
     }
     return m_audioPost.popAudioFrame();
 }
@@ -238,9 +227,7 @@ bool PlayerPrivate::initVideoDecoder(const AVStream* stream)
         }
 #endif
 
-        m_videoPost.setCopyBackRender(m_openParams.copyBackRender);
-        m_videoPost.setFps(av_q2d(stream->avg_frame_rate));
-        m_videoPost.setTimeBase({stream->time_base.num, stream->time_base.den});
+        m_videoPost.initialize(av_q2d(stream->avg_frame_rate), m_openParams.copyBackRender, stream->time_base);
 
         NEAPU_LOGI("Video decoder initialized successfully. copyBackRender={}; fps={}",
                    m_openParams.copyBackRender ? "true" : "false", av_q2d(stream->avg_frame_rate));

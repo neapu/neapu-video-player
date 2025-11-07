@@ -31,13 +31,14 @@ MainWindow::MainWindow()
 }
 MainWindow::~MainWindow()
 {
+    NEAPU_FUNC_TRACE;
+    disconnect(m_audioRenderer, nullptr, this, nullptr);
     if (m_player->isOpen()) {
+        m_audioRenderer->stop();
+        m_videoRenderer->stop();
         m_player->stop();
         m_player->closeMedia();
     }
-
-    m_audioRenderer->stop();
-    m_videoRenderer->stop();
 }
 void MainWindow::createMenus()
 {
@@ -71,6 +72,8 @@ void MainWindow::onOpenFile()
     if (m_player->isOpen()) {
         m_player->stop();
         m_player->closeMedia();
+        m_videoRenderer->stop();
+        m_audioRenderer->stop();
     }
     QString filter = tr(
             "Media Files (*.mp4 *.avi *.mkv *.mov *.webm *.flv *.mp3 *.flac *.aac *.wav *.ogg *.m4a *.opus);;"

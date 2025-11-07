@@ -57,6 +57,7 @@ bool AudioRenderer::start(int sampleRate, int channels)
 
 void AudioRenderer::stop()
 {
+    NEAPU_FUNC_TRACE;
     if (m_device) {
         ma_device_stop(m_device);
         ma_device_uninit(m_device);

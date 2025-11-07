@@ -42,6 +42,8 @@ add_library(${LIB_NAME} STATIC
         VideoDecoder.h
         VideoPost.cpp
         VideoPost.h
+        Clock.cpp
+        Clock.h
 )
 
 target_link_libraries(${LIB_NAME} PUBLIC logger)

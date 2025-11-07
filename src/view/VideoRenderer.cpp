@@ -29,7 +29,10 @@ VideoRenderer::VideoRenderer(const VideoFrameCallback& cb, QWidget* parent)
     : QRhiWidget(parent), m_videoFrameCallback(cb)
 {
 }
-VideoRenderer::~VideoRenderer() {}
+VideoRenderer::~VideoRenderer()
+{
+    NEAPU_FUNC_TRACE;
+}
 void VideoRenderer::start()
 {
     if (!m_stopFlag) {
@@ -41,6 +44,7 @@ void VideoRenderer::start()
 }
 void VideoRenderer::stop()
 {
+    NEAPU_FUNC_TRACE;
     m_stopFlag = true;
     if (m_recvFrameThread.joinable()) {
         m_recvFrameThread.join();

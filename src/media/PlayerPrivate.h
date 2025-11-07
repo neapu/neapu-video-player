@@ -13,11 +13,15 @@
 #include "VideoPost.h"
 #include <thread>
 #include <atomic>
+#include "Clock.h"
 
 namespace media {
 
 class PlayerPrivate {
 public:
+    PlayerPrivate() = default;
+    ~PlayerPrivate();
+
     bool openMedia(const OpenMediaParams& params);
     void closeMedia();
 
@@ -39,18 +43,18 @@ private:
 
 private:
     OpenMediaParams m_openParams;
+    Clock m_clock;
 
     Demuxer m_demuxer;
     AudioDecoder m_audioDecoder;
-    AudioPost m_audioPost;
+    AudioPost m_audioPost{m_clock};
 
     VideoDecoder m_videoDecoder;
-    VideoPost m_videoPost;
+    VideoPost m_videoPost{m_clock};
 
     std::thread m_decodeThread;
     std::atomic<bool> m_stopFlag{false};
     std::atomic<bool> m_pause{false};
-    std::atomic_bool m_startTimePointSet{false};
 };
 
 } // namespace media

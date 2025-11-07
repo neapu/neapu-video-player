@@ -79,12 +79,13 @@ bool VideoDecoder::initialize(const AVStream* stream, const HWAccelConfig& confi
 }
 void VideoDecoder::destroy()
 {
-    DecoderBase::destroy();
+    NEAPU_FUNC_TRACE;
     if (m_hwDeviceCtx) {
         av_buffer_unref(&m_hwDeviceCtx);
         m_hwDeviceCtx = nullptr;
     }
     m_hwPixelFormat = AV_PIX_FMT_NONE;
+    DecoderBase::destroy();
 }
 bool VideoDecoder::initializeHWAccel(HWAccelType type)
 {
@@ -121,7 +122,9 @@ bool VideoDecoder::initializeHWAccel(HWAccelType type)
         const auto hwDevCtx = reinterpret_cast<AVHWDeviceContext*>(m_hwDeviceCtx->data);
         const auto d3d11DevCtx = static_cast<AVD3D11VADeviceContext*>(hwDevCtx->hwctx);
         d3d11DevCtx->device = m_hwConfig.device;
+        d3d11DevCtx->device->AddRef();
         d3d11DevCtx->device_context = m_hwConfig.context;
+        d3d11DevCtx->device_context->AddRef();
         if (av_hwdevice_ctx_init(m_hwDeviceCtx) < 0) {
             NEAPU_LOGE("Failed to initialize D3D11VA HW device context");
             av_buffer_unref(&m_hwDeviceCtx);

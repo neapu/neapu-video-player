@@ -13,7 +13,8 @@ extern "C"{
 namespace media {
 constexpr int64_t HIGH_WATER_MARK_US = 900000; // 单位：微秒
 constexpr int64_t LOW_WATER_MARK_US = 300000;
-constexpr int64_t HIGHEST_WATER_MARK_US = 1500000;
+constexpr int64_t VERY_HIGH_WATER_MARK_US = 1500000;
+constexpr int64_t MAX_WATER_MARK_US = 3000000;
 constexpr AVSampleFormat TARGET_SAMPLE_FORMAT = AV_SAMPLE_FMT_S16;
 
 AudioPost::~AudioPost()
@@ -22,6 +23,36 @@ AudioPost::~AudioPost()
         swr_free(&m_swrCtx);
         m_swrCtx = nullptr;
     }
+}
+
+void AudioPost::initialize(AVRational timeBase)
+{
+    m_timeBase = timeBase;
+    m_hasWaitedFirstFrame = true;
+    m_initialized = true;
+}
+void AudioPost::destroy()
+{
+    m_initialized = false;
+    m_condVar.notify_all();
+
+    if (m_swrCtx) {
+        swr_free(&m_swrCtx);
+        m_swrCtx = nullptr;
+    }
+
+    m_waterLevelUs = 0;
+    m_basePts = 0;
+}
+
+void AudioPost::clear()
+{
+    std::lock_guard lock(m_mutex);
+    while (!m_audioFrameQueue.empty()) {
+        m_audioFrameQueue.pop();
+    }
+    m_waterLevelUs = 0;
+    m_condVar.notify_all();
 }
 
 bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
@@ -35,11 +66,11 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
     std::unique_lock lock(m_mutex);
     m_waterLevelUs += audioFrame->duration();
     auto isWait = [=, this]() {
-        if (m_stopFlag) {
+        if (!m_initialized || !m_clock.isStarted()) {
             return false;
         }
 
-        if (m_waterLevelUs > HIGHEST_WATER_MARK_US) {
+        if (m_waterLevelUs > VERY_HIGH_WATER_MARK_US) {
             return true;
         }
 
@@ -52,7 +83,13 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
         m_condVar.wait_for(lock, std::chrono::milliseconds(100));
     }
 
-    if (m_stopFlag) {
+    while (m_waterLevelUs > MAX_WATER_MARK_US) {
+        NEAPU_LOGW("Audio buffer overflow. Water level(us): {}", m_waterLevelUs);
+        m_waterLevelUs -= m_audioFrameQueue.front()->duration();
+        m_audioFrameQueue.pop();
+    }
+
+    if (!m_initialized) {
         return false;
     }
     // NEAPU_LOGD("Pushed audio frame: duration(us)={}, Water level(us): {}", audioFrame->duration(), m_waterLevelUs);
@@ -63,96 +100,43 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
 
 AudioFramePtr AudioPost::popAudioFrame()
 {
-    if (m_stopFlag || !m_startTimePointSet) {
+    if (!m_initialized || !m_clock.isStarted()) {
         return nullptr;
     }
 
-    auto popFrame = [this]() -> AudioFramePtr {
-        auto audioFrame = std::move(m_audioFrameQueue.front());
-        m_audioFrameQueue.pop();
-        m_waterLevelUs -= audioFrame->duration();
-        m_condVar.notify_all();
-        NEAPU_LOGD("Pop audio. pts: {}", audioFrame->pts());
-        return audioFrame;
-    };
-
     int64_t targetPts = 0;
-    std::unique_lock lock(m_mutex);
-    if (m_audioFrameQueue.empty()) {
-        return nullptr;
+    {
+        std::lock_guard lock(m_mutex);
+        if (m_audioFrameQueue.empty()) {
+            return nullptr;
+        }
+        targetPts = m_audioFrameQueue.front()->pts();
     }
     
     if (!m_hasWaitedFirstFrame) {
-        const auto& frame = m_audioFrameQueue.front();
-        targetPts = frame->pts();
-
-        // 仅在首帧按照起始时间点等待，后续帧不等待直接吐出
-        using clock = std::chrono::steady_clock;
-        const auto now = clock::now();
-        const auto targetTimePoint = m_startTimePoint + std::chrono::microseconds(targetPts);
-        if (targetTimePoint < now) {
-            // 目标时间点已过，直接弹出
-            m_hasWaitedFirstFrame = true;
-            return popFrame();
-        }
-
-        const auto waitDuration = targetTimePoint - now;
-        // 等待直到目标时间点或收到中断/停止信号
-        while (!m_stopFlag) {
-            if (m_waitCondVar.wait_for(lock, waitDuration) == std::cv_status::timeout) {
-                break;
-            }
-        }
-        if (m_stopFlag) {
-            return nullptr;
-        }
-
+        m_clock.wait(targetPts);
         m_hasWaitedFirstFrame = true;
-        return popFrame();
     }
 
-    // 非首帧：不等待，直接吐帧
-    return popFrame();
-}
-
-void AudioPost::clear()
-{
-    if (m_swrCtx) {
-        swr_free(&m_swrCtx);
-        m_swrCtx = nullptr;
-    }
-
-    std::lock_guard lock(m_mutex);
-    while (!m_audioFrameQueue.empty()) {
+    AudioFramePtr audioFrame{};
+    {
+        std::lock_guard lock(m_mutex);
+        audioFrame = std::move(m_audioFrameQueue.front());
         m_audioFrameQueue.pop();
+        m_waterLevelUs -= audioFrame->duration();
+        m_condVar.notify_all();
+        // NEAPU_LOGD("Pop audio. pts: {}", audioFrame->pts());
     }
-
-    m_waterLevelUs = 0;
-    m_basePts = 0;
-    m_stopFlag = true;
-    m_startTimePointSet = false;
-    m_hasWaitedFirstFrame = false;
-}
-void AudioPost::setStopFlag(bool stop)
-{
-    m_stopFlag = stop;
-    m_condVar.notify_all();
-    m_waitCondVar.notify_all();
+    if (audioFrame) m_clock.correctStartTimePoint(audioFrame->pts());
+    return audioFrame;
 }
 
-void AudioPost::setStartTimePoint(const std::chrono::steady_clock::time_point& timePoint)
-{
-    m_startTimePoint = timePoint;
-    m_startTimePointSet = true;
-    m_hasWaitedFirstFrame = false;
-    NEAPU_LOGD_STREAM << "Set start time point: " 
-        << std::chrono::duration_cast<std::chrono::milliseconds>(timePoint.time_since_epoch()).count();
-}
 bool AudioPost::isQueueEmpty()
 {
     std::lock_guard lock(m_mutex);
     return m_audioFrameQueue.empty();
 }
+
 bool AudioPost::initSwrContext(const AVFrame* frame)
 {
     NEAPU_FUNC_TRACE;
