@@ -23,7 +23,7 @@ public:
     ~VideoRenderer() override;
 
     void start();
-    void stop();
+    void stop(bool flush);
 
     void initialize(QRhiCommandBuffer* cb) override;
     void render(QRhiCommandBuffer* cb) override;

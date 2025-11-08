@@ -38,6 +38,13 @@ public:
     int audioSampleRate() const;
     int audioChannels() const;
 
+    bool hasAudioStream() const;
+    bool hasVideoStream() const;
+
+    int64_t duration() const { return m_duration; }
+
+    void seek(int64_t second);
+
 private:
     void decodeThreadFunc();
     bool initVideoDecoder(const AVStream* stream);
@@ -57,6 +64,7 @@ private:
     std::shared_mutex m_mutex;
     bool m_stopFlag{false};
     std::atomic<bool> m_pause{false};
+    int64_t m_duration{0};
 };
 
 } // namespace media

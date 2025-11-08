@@ -13,8 +13,8 @@ namespace media {
 
 class Clock {
 public:
-    void start();
-    void stop();
+    void start(int64_t pts);
+    void clear();
 
     bool isStarted();
     void wait(int64_t pts);
@@ -23,7 +23,6 @@ public:
 
 private:
     std::chrono::steady_clock::time_point m_startTimePoint;
-    bool m_started{false};
     std::mutex m_mutex; // 保护起始时间点的并发访问
 };
 

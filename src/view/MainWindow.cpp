@@ -12,6 +12,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QVBoxLayout>
+#include "ControlWidget.h"
 
 namespace view {
 MainWindow::MainWindow()
@@ -35,7 +36,7 @@ MainWindow::~MainWindow()
     disconnect(m_audioRenderer, nullptr, this, nullptr);
     if (m_player->isOpen()) {
         m_audioRenderer->stop();
-        m_videoRenderer->stop();
+        m_videoRenderer->stop(false);
         m_player->stop();
         m_player->closeMedia();
     }
@@ -59,13 +60,11 @@ void MainWindow::createLayout()
         return m_player->getVideoFrame();
     }, centralWidget);
     layout->addWidget(m_videoRenderer, 1);
-    // 先添加一个占位的widget，用于以后布局控制按钮
-    auto* placeholderWidget = new QWidget(centralWidget);
-    placeholderWidget->setFixedHeight(50);
-    placeholderWidget->setStyleSheet("{background-color: #ff0000;}");
-    layout->addWidget(placeholderWidget, 0);
+    m_controlWidget = new ControlWidget(m_player, centralWidget);
+    m_controlWidget->setFixedHeight(80);
+    layout->addWidget(m_controlWidget, 0);
     layout->setContentsMargins(0, 0, 0, 0);
-
+    layout->setSpacing(0);
 }
 void MainWindow::onOpenFile()
 {
@@ -81,7 +80,7 @@ void MainWindow::onOpenFile()
 
     if (m_player->isOpen()) {
         m_player->stop();
-        m_videoRenderer->stop();
+        m_videoRenderer->stop(true);
         m_audioRenderer->stop();
         m_player->closeMedia();
     }
@@ -90,6 +89,11 @@ void MainWindow::onOpenFile()
     params.url = filePath.toStdString();
     params.decodeOverCallback = [this]() {
         m_isDecodeOver = true;
+    };
+    params.ptsChangedCallback = [this](int64_t currentPts) {
+        QMetaObject::invokeMethod(m_controlWidget, [this, currentPts]() {
+            m_controlWidget->setCurrentPts(currentPts);
+        }, Qt::QueuedConnection);
     };
     params.enableHWAccel = true;
     params.copyBackRender = true;
@@ -106,22 +110,27 @@ void MainWindow::onOpenFile()
         return;
     }
 
+    m_controlWidget->setDuration(m_player->duration());
+
     m_isDecodeOver = false;
-    m_audioRenderer->start(m_player->audioSampleRate(), m_player->audioChannels());
-    m_videoRenderer->start();
+    if (m_player->hasAudioStream()) {
+        m_audioRenderer->start(m_player->audioSampleRate(), m_player->audioChannels());
+    }
+
+    if (m_player->hasVideoStream()) {
+        m_videoRenderer->start();
+    }
 
     m_player->play();
-
-
-
 }
 void MainWindow::onAudioPlayingStateChanged(bool playing)
 {
     NEAPU_FUNC_TRACE;
     if (playing == false) {
         if (m_isDecodeOver) {
-            m_videoRenderer->stop();
+            m_videoRenderer->stop(true);
             m_audioRenderer->stop();
+            m_controlWidget->setCurrentPts(0);
             NEAPU_LOGI("Playback finished, renderers stopped");
         }
     }

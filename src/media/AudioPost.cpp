@@ -29,7 +29,7 @@ void AudioPost::initialize(AVRational timeBase)
 {
     NEAPU_FUNC_TRACE;
     m_timeBase = timeBase;
-    m_hasWaitedFirstFrame = true;
+    m_firstFrame = true;
     m_initialized = true;
 }
 void AudioPost::destroy()
@@ -68,7 +68,7 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
     std::unique_lock lock(m_mutex);
     m_waterLevelUs += audioFrame->duration();
     auto isWait = [=, this]() {
-        if (!m_initialized || !m_clock.isStarted()) {
+        if (!m_initialized) {
             return false;
         }
 
@@ -102,7 +102,7 @@ bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
 
 AudioFramePtr AudioPost::popAudioFrame()
 {
-    if (!m_initialized || !m_clock.isStarted()) {
+    if (!m_initialized) {
         return nullptr;
     }
 
@@ -115,9 +115,12 @@ AudioFramePtr AudioPost::popAudioFrame()
         targetPts = m_audioFrameQueue.front()->pts();
     }
     
-    if (!m_hasWaitedFirstFrame) {
+    if (!m_firstFrame) {
+        m_clock.start(0);   // 只有在时钟没有被设置时生效；音视频线程会竞争设置时钟
         m_clock.wait(targetPts);
-        m_hasWaitedFirstFrame = true;
+        m_firstFrame = true;
+    } else {
+        m_clock.start(targetPts);   // 用于跳转进度后，时钟被重置，需要根据目标时间点重新校正
     }
 
     AudioFramePtr audioFrame{};
@@ -129,7 +132,10 @@ AudioFramePtr AudioPost::popAudioFrame()
         m_condVar.notify_all();
         // NEAPU_LOGD("Pop audio. pts: {}", audioFrame->pts());
     }
-    if (audioFrame) m_clock.correctStartTimePoint(audioFrame->pts());
+    if (audioFrame) {
+        m_clock.correctStartTimePoint(audioFrame->pts());
+        m_currentPts = audioFrame->pts();
+    }
     return audioFrame;
 }
 

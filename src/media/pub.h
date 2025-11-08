@@ -9,9 +9,11 @@ typedef struct ID3D11DeviceContext ID3D11DeviceContext;
 
 namespace media {
 using DecodeOverCallback =  std::function<void()>;
+using PtsChangedCallback = std::function<void(int64_t currentPts)>;
 struct OpenMediaParams {
     std::string url;
     DecodeOverCallback decodeOverCallback{nullptr};
+    PtsChangedCallback ptsChangedCallback{nullptr};
     bool enableHWAccel{false};
     bool copyBackRender{true};
 #ifdef _WIN32

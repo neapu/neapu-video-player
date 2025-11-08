@@ -93,6 +93,40 @@ AVPacket* Demuxer::read()
         return nullptr;
     }
 
+    // 如果存在挂起的跳转请求（单位：秒），先执行一次跳转到对应时间点
+    const int64_t pendingSeekSec = m_seekTimestamp.load();
+    if (pendingSeekSec != 0) {
+        int streamIndex = -1;
+        int64_t targetPts = 0;
+        if (m_videoStream) {
+            streamIndex = m_videoStream->index;
+            // 目标 PTS = seconds * time_base.den / time_base.num
+            const AVRational tb = m_videoStream->time_base;
+            if (tb.num != 0) {
+                targetPts = static_cast<int64_t>(static_cast<double>(pendingSeekSec) * tb.den / tb.num);
+            } else {
+                targetPts = 0;
+            }
+            NEAPU_LOGI("Seeking video stream to timestamp: {}s, targetPts: {}, time_base: {}/{}",
+                       pendingSeekSec, targetPts, tb.num, tb.den);
+        } else {
+            // 无视频流时按全局时间基（1e6 为 AV_TIME_BASE）跳转
+            streamIndex = -1;
+            targetPts = pendingSeekSec * 1000000LL;
+            NEAPU_LOGI("Seeking to timestamp: {}s using global time base, targetPts: {}", pendingSeekSec, targetPts);
+        }
+
+        const int sret = av_seek_frame(m_formatCtx, streamIndex, targetPts, AVSEEK_FLAG_BACKWARD);
+        if (sret < 0) {
+            NEAPU_LOGE("Seek failed: {}; code: {}", MediaUtils::getFFmpegError(sret), sret);
+        } else {
+            avformat_flush(m_formatCtx);
+            NEAPU_LOGI("Seek to timestamp: {}s, targetPts: {} success", pendingSeekSec, targetPts);
+        }
+        // 清空挂起跳转标记
+        m_seekTimestamp.store(0);
+    }
+
     av_packet_unref(m_packet);
     const int ret = av_read_frame(m_formatCtx, m_packet);
     if (ret < 0) {
@@ -124,7 +158,28 @@ AVStream* Demuxer::audioStream() const
     return m_audioStream;
 }
 
-void Demuxer::seek(double timestamp)
+int64_t Demuxer::mediaDuration() const
+{
+    if (!m_formatCtx) {
+        return 0;
+    }
+
+    if (m_formatCtx->duration) {
+        return av_rescale_q(m_formatCtx->duration, AV_TIME_BASE_Q, AV_TIME_BASE_Q);
+    }
+
+    if (m_audioStream->duration) {
+        return av_rescale_q(m_audioStream->duration, m_audioStream->time_base, AV_TIME_BASE_Q);
+    }
+
+    if (m_videoStream->duration) {
+        return av_rescale_q(m_videoStream->duration, m_videoStream->time_base, AV_TIME_BASE_Q);
+    }
+
+    return 0;
+}
+
+void Demuxer::seek(int64_t timestamp)
 {
     NEAPU_FUNC_TRACE;
     if (!m_formatCtx) {
@@ -132,24 +187,8 @@ void Demuxer::seek(double timestamp)
         return;
     }
 
-    int streamIndex = -1;
-    int64_t targetPts = 0;
-    if (m_videoStream) {
-        streamIndex = m_videoStream->index;
-        const double tb = av_q2d(m_videoStream->time_base);
-        targetPts = static_cast<int64_t>(timestamp / tb);
-    } else {
-        // 退化处理：无视频流时按全局时间基（秒）跳转
-        streamIndex = -1;
-        targetPts = static_cast<int64_t>(timestamp * 1000000.0); // AV_TIME_BASE = 1e6
-    }
-
-    const int ret = av_seek_frame(m_formatCtx, streamIndex, targetPts, AVSEEK_FLAG_BACKWARD);
-    if (ret < 0) {
-        NEAPU_LOGE("Seek failed: {}; code: {}", MediaUtils::getFFmpegError(ret), ret);
-        return;
-    }
-    avformat_flush(m_formatCtx);
+    m_seekTimestamp = timestamp;
+    NEAPU_LOGI("Seek request queued: {}s", timestamp);
 }
 
 void Demuxer::seekToStart()

@@ -61,6 +61,7 @@ private:
 
     AVRational m_timeBase{1, 1000000};
     int64_t m_basePts{0};
+    bool m_firstFrame{false};
 };
 
 } // namespace media

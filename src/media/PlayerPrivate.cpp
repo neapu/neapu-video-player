@@ -39,8 +39,13 @@ bool PlayerPrivate::openMedia(const OpenMediaParams& params)
 
     const auto* videoStream = m_demuxer.videoStream();
     if (videoStream) {
-        return initVideoDecoder(videoStream);
+        if (!initVideoDecoder(videoStream)) {
+            NEAPU_LOGE("Failed to initialize video decoder");
+            return false;
+        }
     }
+
+    m_duration = m_demuxer.mediaDuration();
 
     return true;
 }
@@ -85,7 +90,7 @@ void PlayerPrivate::stop()
     NEAPU_FUNC_TRACE;
     std::unique_lock lock(m_mutex);
     m_stopFlag = true;
-    m_clock.stop();
+    m_clock.clear();
     m_audioPost.clear();
     m_videoPost.clear();
     if (m_decodeThread.joinable()) {
@@ -99,7 +104,12 @@ VideoFramePtr PlayerPrivate::getVideoFrame()
     if (m_stopFlag) {
         return nullptr;
     }
-    return m_videoPost.popVideoFrame();
+    auto frame = m_videoPost.popVideoFrame();
+    if (!m_demuxer.audioStream() && frame && m_duration > 0 && m_openParams.ptsChangedCallback) {
+        // 无音频流时，使用视频帧时间点作为播放进度
+        m_openParams.ptsChangedCallback(frame->pts());
+    }
+    return frame;
 }
 
 AudioFramePtr PlayerPrivate::getAudioFrame()
@@ -108,7 +118,11 @@ AudioFramePtr PlayerPrivate::getAudioFrame()
     if (m_stopFlag) {
         return nullptr;
     }
-    return m_audioPost.popAudioFrame();
+    auto frame = m_audioPost.popAudioFrame();
+    if (frame && m_duration > 0 && m_openParams.ptsChangedCallback) {
+        m_openParams.ptsChangedCallback(frame->pts());
+    }
+    return frame;
 }
 
 int PlayerPrivate::audioSampleRate() const
@@ -119,6 +133,36 @@ int PlayerPrivate::audioSampleRate() const
 int PlayerPrivate::audioChannels() const
 {
     return m_audioDecoder.channels();
+}
+
+bool PlayerPrivate::hasAudioStream() const
+{
+    return m_demuxer.audioStream() != nullptr;
+}
+
+bool PlayerPrivate::hasVideoStream() const
+{
+    return m_demuxer.videoStream() != nullptr;
+}
+
+void PlayerPrivate::seek(int64_t second)
+{
+    NEAPU_FUNC_TRACE;
+    if (!m_demuxer.isOpen()) {
+        NEAPU_LOGE("Media is not open");
+        return;
+    }
+
+    if (second < 0 || (m_duration > 0 && second * 1000000 > m_duration)) {
+        NEAPU_LOGE("Seek position out of range: {}", second);
+        return;
+    }
+
+    std::unique_lock lock(m_mutex);
+    m_demuxer.seek(static_cast<double>(second));
+    m_audioPost.clear();
+    m_videoPost.clear();
+    m_clock.clear();
 }
 
 void PlayerPrivate::decodeThreadFunc()
@@ -137,16 +181,10 @@ void PlayerPrivate::decodeThreadFunc()
         }
 
         auto onAudioFrame = [this] (AVFrame* frame) {
-            if (!m_clock.isStarted()) {
-                m_clock.start();
-            }
             m_audioPost.pushAudioFrame(frame, m_videoPost.waterLevel());
         };
 
         auto onVideoFrame = [this] (AVFrame* frame) {
-            if (!m_clock.isStarted()) {
-                m_clock.start();
-            }
             m_videoPost.pushVideoFrame(frame);
         };
 

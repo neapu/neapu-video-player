@@ -7,8 +7,6 @@
 #include "VideoFrame.h"
 #include "AudioFrame.h"
 
-
-
 namespace media {
 class PlayerPrivate;
 class Player {
@@ -31,6 +29,13 @@ public:
 
     int audioSampleRate() const;
     int audioChannels() const;
+
+    bool hasAudioStream() const;
+    bool hasVideoStream() const;
+
+    int64_t duration() const;
+
+    void seek(int64_t second);
 
 private:
     PlayerPrivate* m_d{nullptr};

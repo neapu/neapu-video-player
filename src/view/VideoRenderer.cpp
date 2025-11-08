@@ -42,7 +42,7 @@ void VideoRenderer::start()
     m_stopFlag = false;
     m_recvFrameThread = std::thread([this]() { recvFrameThread(); });
 }
-void VideoRenderer::stop()
+void VideoRenderer::stop(bool flush)
 {
     NEAPU_FUNC_TRACE;
     m_stopFlag = true;
@@ -55,10 +55,13 @@ void VideoRenderer::stop()
     m_currentHeight = 0;
     m_currentPixelFormat = media::VideoFrame::PixelFormat::NONE;
 
-    QMetaObject::invokeMethod(this, [this]() {
-        createEmptyPipeline();
-        update();
-    });
+    if (flush) {
+        QMetaObject::invokeMethod(this, [this]() {
+            createEmptyPipeline();
+            update();
+        }, Qt::QueuedConnection);
+    }
+
 }
 void VideoRenderer::initialize(QRhiCommandBuffer* cb)
 {

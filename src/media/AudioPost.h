@@ -35,6 +35,8 @@ public:
     int64_t waterLevel() const { return m_waterLevelUs; }
     bool isQueueEmpty();
 
+    int64_t currentPts() const { return m_currentPts; }
+
 private:
     bool initSwrContext(const AVFrame* frame);
     AudioFramePtr resampleAudioFrame(const AVFrame* frame);
@@ -55,7 +57,8 @@ private:
 
     AVRational m_timeBase{1, 1000000}; // 默认微秒时间基
     // 首帧等待标记：仅在第一帧按起始时间点等待，后续不等待直接出帧
-    bool m_hasWaitedFirstFrame{false};
+    bool m_firstFrame{false};
+    int64_t m_currentPts{0};
 };
 
 } // namespace media

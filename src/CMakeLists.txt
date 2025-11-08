@@ -18,6 +18,14 @@ qt_add_shaders(${EXE_NAME} "shaders"
         shaders/p010.frag
 )
 
+file(GLOB SVG_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "images/*.svg")
+qt_add_resources(${EXE_NAME} "resources"
+        BASE "images"
+        PREFIX "/svg"
+        FILES
+        ${SVG_FILES}
+)
+
 add_subdirectory(media)
 add_subdirectory(view)
 

@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <memory>
 #include "../media/Player.h"
+#include "ControlWidget.h"
 
 namespace view {
 class VideoRenderer;
@@ -27,6 +28,7 @@ private slots:
 private:
     VideoRenderer* m_videoRenderer{nullptr};
     AudioRenderer* m_audioRenderer{nullptr};
+    ControlWidget* m_controlWidget{nullptr};
     std::unique_ptr<media::Player> m_player{nullptr};
     bool m_isDecodeOver{false};
 };

@@ -4,32 +4,35 @@
 
 #include "Clock.h"
 #include <thread>
+#include <logger.h>
 
 namespace media {
-void Clock::start()
+void Clock::start(int64_t pts)
 {
     std::lock_guard lk(m_mutex);
-    if (m_started) return;
-    m_startTimePoint = std::chrono::steady_clock::now();
-    m_started = true;
+    if (m_startTimePoint != std::chrono::steady_clock::time_point{}) {
+        return;
+    }
+    m_startTimePoint = std::chrono::steady_clock::now() - std::chrono::microseconds(pts);
+    NEAPU_LOGI("Clock started at pts={} us", pts);
 }
-void Clock::stop()
+void Clock::clear()
 {
     std::lock_guard lk(m_mutex);
-    m_started = false;
     m_startTimePoint = {};
+    NEAPU_LOGI("Clock cleared");
 }
 bool Clock::isStarted()
 {
     std::lock_guard lk(m_mutex);
-    return m_started;
+    return  m_startTimePoint != std::chrono::steady_clock::time_point{};
 }
 void Clock::wait(int64_t pts)
 {
     std::chrono::steady_clock::time_point start;
     {
         std::lock_guard lk(m_mutex);
-        if (!m_started) return;
+        if (m_startTimePoint == std::chrono::steady_clock::time_point{}) return;
         start = m_startTimePoint;
     }
 
@@ -39,7 +42,7 @@ void Clock::wait(int64_t pts)
 void Clock::correctStartTimePoint(int64_t pts)
 {
     std::lock_guard<std::mutex> lk(m_mutex);
-    if (!m_started) {
+    if (m_startTimePoint == std::chrono::steady_clock::time_point{}) {
         return;
     }
 
@@ -53,12 +56,19 @@ void Clock::correctStartTimePoint(int64_t pts)
     const auto diff = desiredStart - m_startTimePoint; // 正值表示当前起点过晚
 
     // 为避免抖动，设置一个小阈值，偏差小于该值则不调整
-    constexpr auto kJitterThreshold = std::chrono::microseconds(2000); // 2 ms
+    constexpr auto kJitterThreshold = std::chrono::microseconds(5000); // 5 ms
 
     if (diff > kJitterThreshold || diff < -kJitterThreshold) {
         // 采用部分修正，避免一次性跳变导致可感知抖动
         // 这里使用比例系数进行渐进式靠拢
         const double alpha = 0.2; // 20% 的误差校正比例
+
+        NEAPU_LOGI( "Clock correction: diff={} us, adjusting start time point. Current start={}, desired start={}, pts={}",
+            std::chrono::duration_cast<std::chrono::microseconds>(diff).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(m_startTimePoint.time_since_epoch()).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(desiredStart.time_since_epoch()).count(),
+            pts
+        );
 
         auto adjust = std::chrono::duration_cast<std::chrono::microseconds>(
             diff * alpha

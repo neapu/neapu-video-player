@@ -4,6 +4,7 @@
 
 #include "VideoPost.h"
 #include <logger.h>
+#include <cmath>
 #include "MediaUtils.h"
 extern "C" {
 #include <libavutil/frame.h>
@@ -37,6 +38,7 @@ void VideoPost::initialize(double fps, bool copyBackRender, AVRational timeBase)
     m_timeBase = timeBase;
     m_waterLevel = 0;
     m_initialized = true;
+    m_firstFrame = true;
 }
 
 void VideoPost::destroy()
@@ -83,7 +85,8 @@ void VideoPost::pushVideoFrame(const AVFrame* frame)
     int64_t durationUs = videoFrame->duration();
     if (durationUs <= 0) {
         if (m_fps > 0) {
-            durationUs = static_cast<int64_t>(1000000.0 / m_fps + 0.5); // 约等于 1e6/fps 微秒
+            // 使用 llround 进行正确的四舍五入，避免 (x + 0.5) 的误差与边界问题
+            durationUs = static_cast<int64_t>(std::llround(1000000.0 / m_fps)); // 约等于 1e6/fps 微秒
         } else {
             durationUs = 40000; // 默认25fps -> 40ms
         }
@@ -103,7 +106,7 @@ void VideoPost::pushVideoFrame(const AVFrame* frame)
 
 VideoFramePtr VideoPost::popVideoFrame()
 {
-    if (!m_initialized || !m_clock.isStarted()) {
+    if (!m_initialized) {
         return nullptr;
     }
 
@@ -115,6 +118,11 @@ VideoFramePtr VideoPost::popVideoFrame()
         }
         const auto& frame = m_videoFrameQueue.front();
         targetPts = frame->pts();
+    }
+
+    if (m_firstFrame) {
+        m_clock.start(0);
+        m_firstFrame = false;
     }
 
     m_clock.wait(targetPts);

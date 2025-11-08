@@ -57,4 +57,20 @@ int Player::audioChannels() const
 {
     return m_d->audioChannels();
 }
+bool Player::hasAudioStream() const
+{
+    return m_d->hasAudioStream();
+}
+bool Player::hasVideoStream() const
+{
+    return m_d->hasVideoStream();
+}
+int64_t Player::duration() const
+{
+    return m_d->duration();
+}
+void Player::seek(int64_t second)
+{
+    return m_d->seek(second);
+}
 } // namespace media
