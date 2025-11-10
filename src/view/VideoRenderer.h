@@ -19,10 +19,11 @@ using VideoFrameCallback = std::function<media::VideoFramePtr()>;
 class VideoRenderer final : public QRhiWidget {
     Q_OBJECT
 public:
-    explicit VideoRenderer(const VideoFrameCallback& cb, QWidget* parent = nullptr);
+    explicit VideoRenderer(QWidget* parent = nullptr);
     ~VideoRenderer() override;
 
-    void start();
+    void renderFrame(media::VideoFramePtr frame);
+
     void stop(bool flush);
 
     void initialize(QRhiCommandBuffer* cb) override;
@@ -37,7 +38,6 @@ signals:
     void initialized();
 
 private:
-    void recvFrameThread();
     bool createPipeline();
     bool createEmptyPipeline();
     QString getFragmentShaderName();
@@ -51,10 +51,6 @@ private:
     bool updateD3D11Texture(QRhiCommandBuffer* cb, QRhiResourceUpdateBatch* rub);
 
 private:
-    VideoFrameCallback m_videoFrameCallback;
-    std::thread m_recvFrameThread;
-    std::atomic_bool m_stopFlag{true};
-
     media::VideoFramePtr m_currentFrame{nullptr};
     std::mutex m_frameMutex;
 

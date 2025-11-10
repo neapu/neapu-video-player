@@ -24,7 +24,8 @@ public:
     void play();
     void stop();
 
-    VideoFramePtr getVideoFrame();
+    // 音频和视频的出帧方式不同，音频由render拉取，视频由解码线程推送
+    // 这是因为音频数据的播放需要持续稳定，而视频帧可以丢弃以保持同步
     AudioFramePtr getAudioFrame();
 
     int audioSampleRate() const;

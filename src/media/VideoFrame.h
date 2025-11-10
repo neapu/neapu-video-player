@@ -5,9 +5,6 @@
 #pragma once
 #include <memory>
 #include "pub.h"
-extern "C"{
-#include <libavutil/avutil.h>
-}
 #ifdef _WIN32
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -41,7 +38,7 @@ public:
 
     ~VideoFrame();
 
-    static std::unique_ptr<VideoFrame> fromAVFrame(const void* frame, AVRational timeBase);
+    static std::unique_ptr<VideoFrame> fromAVFrame(const void* frame, int timeBaseNum, int timeBaseDen);
 
     uint8_t* y() const { return m_yData; }
     uint8_t* u() const { return m_uData; }

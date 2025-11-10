@@ -5,6 +5,7 @@
 #include "AudioRenderer.h"
 #include <miniaudio.h>
 #include <logger.h>
+#include <cmath>
 
 namespace view {
 AudioRenderer::AudioRenderer(const AudioFrameCallback& cb, QObject* parent)

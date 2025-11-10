@@ -183,13 +183,13 @@ void DecoderBase::destroy()
     m_codec = nullptr;
 }
 
-bool DecoderBase::decodePacket(AVPacket* packet, const FrameCallback& callback)
+bool DecoderBase::decodePacket(AVPacketPtr packet, const FrameCallback& callback)
 {
     if (!packet) {
         NEAPU_LOGE("Input packet is null");
         return false;
     }
-    int ret = avcodec_send_packet(m_codecCtx, packet);
+    int ret = avcodec_send_packet(m_codecCtx, packet.get());
     if (ret < 0) {
         NEAPU_LOGE("Error sending packet to decoder: {}; code: {}", MediaUtils::getFFmpegError(ret), ret);
         return false;
@@ -227,6 +227,17 @@ bool DecoderBase::decodePacket(AVPacket* packet, const FrameCallback& callback)
     return true;
 }
 
+void DecoderBase::flush()
+{
+    NEAPU_FUNC_TRACE;
+    if (!m_codecCtx) {
+        NEAPU_LOGE("Codec context is not initialized");
+        return;
+    }
+
+    avcodec_flush_buffers(m_codecCtx);
+}
+
 bool DecoderBase::initializeCodecContext(const AVStream* stream)
 {
     NEAPU_FUNC_TRACE;
@@ -253,6 +264,9 @@ bool DecoderBase::initializeCodecContext(const AVStream* stream)
         avcodec_free_context(&m_codecCtx);
         return false;
     }
+
+    m_codecCtx->pkt_timebase = stream->time_base;
+    m_codecCtx->time_base = stream->time_base;
 
     return true;
 }

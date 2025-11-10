@@ -23,126 +23,33 @@ AudioPost::~AudioPost()
         swr_free(&m_swrCtx);
         m_swrCtx = nullptr;
     }
+
+    if (m_dstData) {
+        av_freep(&m_dstData[0]);
+        av_freep(&m_dstData);
+        m_dstData = nullptr;
+    }
 }
 
 void AudioPost::initialize(AVRational timeBase)
 {
     NEAPU_FUNC_TRACE;
     m_timeBase = timeBase;
-    m_firstFrame = true;
-    m_initialized = true;
 }
 void AudioPost::destroy()
 {
     NEAPU_FUNC_TRACE;
-    m_initialized = false;
-    m_condVar.notify_all();
 
     if (m_swrCtx) {
         swr_free(&m_swrCtx);
         m_swrCtx = nullptr;
     }
 
-    m_waterLevelUs = 0;
-    m_basePts = 0;
-}
-
-void AudioPost::clear()
-{
-    std::lock_guard lock(m_mutex);
-    while (!m_audioFrameQueue.empty()) {
-        m_audioFrameQueue.pop();
+    if (m_dstData) {
+        av_freep(&m_dstData[0]);
+        av_freep(&m_dstData);
+        m_dstData = nullptr;
     }
-    m_waterLevelUs = 0;
-    m_condVar.notify_all();
-}
-
-bool AudioPost::pushAudioFrame(const AVFrame* frame, int64_t videoWaterLevelUs)
-{
-    auto audioFrame = resampleAudioFrame(frame);
-    if (!audioFrame) {
-        NEAPU_LOGW("Failed to resample audio frame");
-        return false;
-    }
-
-    std::unique_lock lock(m_mutex);
-    m_waterLevelUs += audioFrame->duration();
-    auto isWait = [=, this]() {
-        if (!m_initialized) {
-            return false;
-        }
-
-        if (m_waterLevelUs > VERY_HIGH_WATER_MARK_US) {
-            return true;
-        }
-
-        if (m_waterLevelUs > HIGH_WATER_MARK_US && (videoWaterLevelUs > LOW_WATER_MARK_US || videoWaterLevelUs < 0)) {
-            return true;
-        }
-        return false;
-    };
-    while (isWait()) {
-        m_condVar.wait_for(lock, std::chrono::milliseconds(100));
-    }
-
-    while (m_waterLevelUs > MAX_WATER_MARK_US) {
-        NEAPU_LOGW("Audio buffer overflow. Water level(us): {}", m_waterLevelUs);
-        m_waterLevelUs -= m_audioFrameQueue.front()->duration();
-        m_audioFrameQueue.pop();
-    }
-
-    if (!m_initialized) {
-        return false;
-    }
-    // NEAPU_LOGD("Pushed audio frame: duration(us)={}, Water level(us): {}", audioFrame->duration(), m_waterLevelUs);
-    m_audioFrameQueue.push(std::move(audioFrame));
-
-    return true;
-}
-
-AudioFramePtr AudioPost::popAudioFrame()
-{
-    if (!m_initialized) {
-        return nullptr;
-    }
-
-    int64_t targetPts = 0;
-    {
-        std::lock_guard lock(m_mutex);
-        if (m_audioFrameQueue.empty()) {
-            return nullptr;
-        }
-        targetPts = m_audioFrameQueue.front()->pts();
-    }
-    
-    if (!m_firstFrame) {
-        m_clock.start(0);   // 只有在时钟没有被设置时生效；音视频线程会竞争设置时钟
-        m_clock.wait(targetPts);
-        m_firstFrame = true;
-    } else {
-        m_clock.start(targetPts);   // 用于跳转进度后，时钟被重置，需要根据目标时间点重新校正
-    }
-
-    AudioFramePtr audioFrame{};
-    {
-        std::lock_guard lock(m_mutex);
-        audioFrame = std::move(m_audioFrameQueue.front());
-        m_audioFrameQueue.pop();
-        m_waterLevelUs -= audioFrame->duration();
-        m_condVar.notify_all();
-        // NEAPU_LOGD("Pop audio. pts: {}", audioFrame->pts());
-    }
-    if (audioFrame) {
-        m_clock.correctStartTimePoint(audioFrame->pts());
-        m_currentPts = audioFrame->pts();
-    }
-    return audioFrame;
-}
-
-bool AudioPost::isQueueEmpty()
-{
-    std::lock_guard lock(m_mutex);
-    return m_audioFrameQueue.empty();
 }
 
 bool AudioPost::initSwrContext(const AVFrame* frame)
@@ -211,7 +118,7 @@ bool AudioPost::initSwrContext(const AVFrame* frame)
     return true;
 }
 
-AudioFramePtr AudioPost::resampleAudioFrame(const AVFrame* frame)
+AudioFramePtr AudioPost::resampleAudioFrame(const AVFrame* frame, int64_t ptsOffset)
 {
     if (!frame) {
         NEAPU_LOGE("Input frame is null");
@@ -225,16 +132,22 @@ AudioFramePtr AudioPost::resampleAudioFrame(const AVFrame* frame)
         }
     }
 
-    int64_t pts = 0;
-    if (frame->pts == AV_NOPTS_VALUE) {
-        pts = m_basePts;
-        // 使用 nb_samples / sample_rate -> 微秒
-        m_basePts += av_rescale_q(frame->nb_samples, AVRational{1, frame->sample_rate}, AV_TIME_BASE_Q);
-    } else if (frame->time_base.num != 0) {
-        pts = av_rescale_q(frame->pts, frame->time_base, AV_TIME_BASE_Q);
+    int64_t pts = -1;
+    // if (frame->pts == AV_NOPTS_VALUE) {
+    //     pts = m_basePts;
+    //     // 使用 nb_samples / sample_rate -> 微秒
+    //     m_basePts += av_rescale_q(frame->nb_samples, AVRational{1, frame->sample_rate}, AV_TIME_BASE_Q);
+    // } else if (frame->time_base.num != 0) {
+    //     pts = av_rescale_q(frame->pts, frame->time_base, AV_TIME_BASE_Q);
+    // } else {
+    //     pts = av_rescale_q(frame->pts, m_timeBase, AV_TIME_BASE_Q);
+    // }
+    if (frame->time_base.num != 0 && frame->time_base.den != 0) {
+        pts = av_rescale_q(frame->best_effort_timestamp, frame->time_base, AV_TIME_BASE_Q);
     } else {
-        pts = av_rescale_q(frame->pts, m_timeBase, AV_TIME_BASE_Q);
+        pts = av_rescale_q(frame->best_effort_timestamp, m_timeBase, AV_TIME_BASE_Q);
     }
+    pts += ptsOffset;
 
     if (m_swrCtx) {
         // 需要重采样

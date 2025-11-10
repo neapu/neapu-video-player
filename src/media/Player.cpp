@@ -41,10 +41,6 @@ void Player::stop()
 {
     m_d->stop();
 }
-VideoFramePtr Player::getVideoFrame()
-{
-    return m_d->getVideoFrame();
-}
 AudioFramePtr Player::getAudioFrame()
 {
     return m_d->getAudioFrame();

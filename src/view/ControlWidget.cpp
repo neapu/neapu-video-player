@@ -166,15 +166,15 @@ void ControlWidget::onTimelineSliderPressed()
 {
     QMutexLocker locker(&m_mutex);
     m_timelineSliderDragging = true;
+    if (m_player) {
+        NEAPU_LOGI("Seeking to {} seconds", m_timelineSlider->value());
+        m_player->seek(m_timelineSlider->value());
+    }
 }
 void ControlWidget::onTimelineSliderReleased()
 {
     QMutexLocker locker(&m_mutex);
     m_timelineSliderDragging = false;
-    if (m_player) {
-        NEAPU_LOGI("Seeking to {} seconds", m_timelineSlider->value());
-        m_player->seek(m_timelineSlider->value());
-    }
 }
 void ControlWidget::onVolumeSliderMoved(int value)
 {

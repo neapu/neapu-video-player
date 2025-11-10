@@ -32,7 +32,6 @@ public:
     void play();
     void stop();
 
-    VideoFramePtr getVideoFrame();
     AudioFramePtr getAudioFrame();
 
     int audioSampleRate() const;
@@ -46,7 +45,9 @@ public:
     void seek(int64_t second);
 
 private:
-    void decodeThreadFunc();
+    void readThreadFunc();
+    void audioDecodeThreadFunc();
+    void videoDecodeThreadFunc();
     bool initVideoDecoder(const AVStream* stream);
 
 private:
@@ -55,16 +56,38 @@ private:
 
     Demuxer m_demuxer;
     AudioDecoder m_audioDecoder;
-    AudioPost m_audioPost{m_clock};
+    AudioPost m_audioPost;
 
     VideoDecoder m_videoDecoder;
-    VideoPost m_videoPost{m_clock};
+    VideoPost m_videoPost;
 
-    std::thread m_decodeThread;
-    std::shared_mutex m_mutex;
-    bool m_stopFlag{false};
-    std::atomic<bool> m_pause{false};
+    std::thread m_readThread;
+    std::thread m_audioDecodeThread;
+    std::thread m_videoDecodeThread;
+    std::atomic_bool m_running{false};
     int64_t m_duration{0};
+
+    std::queue<AVPacketPtr> m_videoPacketQueue;
+    std::mutex m_videoPacketMutex;
+    std::condition_variable m_videoPacketCondVar;
+
+    std::queue<AVPacketPtr> m_audioPacketQueue;
+    std::mutex m_audioPacketMutex;
+    std::condition_variable m_audioPacketCondVar;
+
+    AudioFramePtr m_audioFrame{nullptr};
+    std::mutex m_audioFrameMutex;
+    std::condition_variable m_audioFrameCondVar;
+
+    std::atomic_bool m_mediaReadOver{false};
+    std::atomic_bool m_audioDecodeOver{false};
+
+    std::atomic<int64_t> m_seekTargetSecond{-1};
+    std::atomic_bool m_seekFlagAudio{false};
+    std::atomic_bool m_seekFlagVideo{false};
+    std::atomic<int64_t> m_afterSeekTimestampOffsetUs{0};
+    bool m_firstAudioFrame{true};
+    bool m_firstVideoFrame{true};
 };
 
 } // namespace media

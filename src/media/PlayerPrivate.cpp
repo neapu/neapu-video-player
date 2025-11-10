@@ -9,12 +9,15 @@ extern "C" {
 #include <libavcodec/packet.h>
 }
 namespace media {
+constexpr auto MAX_QUEUE_LEN = 100;
+constexpr auto MIN_QUEUE_LEN = 0;
 PlayerPrivate::~PlayerPrivate()
 {
     NEAPU_FUNC_TRACE;
 }
 bool PlayerPrivate::openMedia(const OpenMediaParams& params)
 {
+    // UI线程
     NEAPU_FUNC_TRACE;
     if (m_demuxer.isOpen()) {
         NEAPU_LOGE("Media is already open");
@@ -52,6 +55,7 @@ bool PlayerPrivate::openMedia(const OpenMediaParams& params)
 
 void PlayerPrivate::closeMedia()
 {
+    // UI线程
     NEAPU_FUNC_TRACE;
     m_audioDecoder.destroy();
     m_videoDecoder.destroy();
@@ -62,7 +66,7 @@ void PlayerPrivate::closeMedia()
 
 bool PlayerPrivate::isPause() const
 {
-    return m_pause;
+    return false;
 }
 
 bool PlayerPrivate::isOpen() const
@@ -72,54 +76,68 @@ bool PlayerPrivate::isOpen() const
 
 void PlayerPrivate::play()
 {
+    // UI线程
     NEAPU_FUNC_TRACE;
-    if (m_decodeThread.joinable()) {
+    if (m_readThread.joinable()) {
         // 逻辑上不允许走这个路径
         NEAPU_LOGE("Decode thread is already running");
         return;
     }
 
-    std::unique_lock lock(m_mutex);
-    m_stopFlag = false;
-    m_pause = false;
-    m_decodeThread = std::thread(&PlayerPrivate::decodeThreadFunc, this);
+    m_running = true;
+    m_readThread = std::thread(&PlayerPrivate::readThreadFunc, this);
+    m_audioDecodeThread = std::thread(&PlayerPrivate::audioDecodeThreadFunc, this);
+    m_videoDecodeThread = std::thread(&PlayerPrivate::videoDecodeThreadFunc, this);
 }
 
 void PlayerPrivate::stop()
 {
+    // UI线程
     NEAPU_FUNC_TRACE;
-    std::unique_lock lock(m_mutex);
-    m_stopFlag = true;
+    m_running = false;
+    m_audioFrameCondVar.notify_all();
+    m_audioPacketCondVar.notify_all();
+    m_videoPacketCondVar.notify_all();
     m_clock.clear();
-    m_audioPost.clear();
-    m_videoPost.clear();
-    if (m_decodeThread.joinable()) {
-        m_decodeThread.join();
+    if (m_readThread.joinable()) {
+        m_readThread.join();
     }
-}
-
-VideoFramePtr PlayerPrivate::getVideoFrame()
-{
-    std::shared_lock lock(m_mutex);
-    if (m_stopFlag) {
-        return nullptr;
+    if (m_audioDecodeThread.joinable()) {
+        m_audioDecodeThread.join();
     }
-    auto frame = m_videoPost.popVideoFrame();
-    if (!m_demuxer.audioStream() && frame && m_duration > 0 && m_openParams.ptsChangedCallback) {
-        // 无音频流时，使用视频帧时间点作为播放进度
-        m_openParams.ptsChangedCallback(frame->pts());
+    if (m_videoDecodeThread.joinable()) {
+        m_videoDecodeThread.join();
     }
-    return frame;
 }
 
 AudioFramePtr PlayerPrivate::getAudioFrame()
 {
-    std::shared_lock lock(m_mutex);
-    if (m_stopFlag) {
+    // 音频播放线程
+    std::unique_lock frameLock(m_audioFrameMutex);
+    while (m_running && !m_audioFrame && !m_audioDecodeOver) {
+        // 理论上不用等待
+        NEAPU_LOGW("Audio frame is not ready, waiting...");
+        m_audioFrameCondVar.wait(frameLock);
+    }
+    if (!m_running || m_audioDecodeOver) {
         return nullptr;
     }
-    auto frame = m_audioPost.popAudioFrame();
-    if (frame && m_duration > 0 && m_openParams.ptsChangedCallback) {
+    if (!m_audioFrame) {
+        NEAPU_LOGE("Audio frame is null after wait");
+        return nullptr;
+    }
+    // NEAPU_LOGD("Audio frame fetched. pts={}", m_audioFrame->pts());
+    auto frame = std::move(m_audioFrame);
+    m_audioFrame.reset();
+    m_audioFrameCondVar.notify_one();
+
+    if (m_firstAudioFrame) {
+        m_clock.wait(frame->pts());
+        m_firstAudioFrame = false;
+    }
+    m_clock.setAudioPts(frame->pts());
+
+    if (m_openParams.ptsChangedCallback) {
         m_openParams.ptsChangedCallback(frame->pts());
     }
     return frame;
@@ -148,62 +166,215 @@ bool PlayerPrivate::hasVideoStream() const
 void PlayerPrivate::seek(int64_t second)
 {
     NEAPU_FUNC_TRACE;
-    if (!m_demuxer.isOpen()) {
-        NEAPU_LOGE("Media is not open");
-        return;
+    m_seekTargetSecond = second;
+    {
+        std::lock_guard lock1(m_audioPacketMutex);
+        while (!m_audioPacketQueue.empty()) {
+            m_audioPacketQueue.pop();
+        }
+        m_audioPacketCondVar.notify_all();
+    }
+    {
+        std::lock_guard lock2(m_videoPacketMutex);
+        while (!m_videoPacketQueue.empty()) {
+            m_videoPacketQueue.pop();
+        }
+        m_videoPacketCondVar.notify_all();
     }
 
-    if (second < 0 || (m_duration > 0 && second * 1000000 > m_duration)) {
-        NEAPU_LOGE("Seek position out of range: {}", second);
-        return;
-    }
 
-    std::unique_lock lock(m_mutex);
-    m_demuxer.seek(static_cast<double>(second));
-    m_audioPost.clear();
-    m_videoPost.clear();
-    m_clock.clear();
 }
 
-void PlayerPrivate::decodeThreadFunc()
+void PlayerPrivate::readThreadFunc()
 {
+    // 媒体读取线程
     NEAPU_FUNC_TRACE;
-    while (!m_stopFlag) {
-        if (m_pause) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
+    m_mediaReadOver = false;
+    while (m_running) {
+        auto seekTarget = m_seekTargetSecond.load();
+        if (seekTarget >= 0) {
+            NEAPU_LOGI("Seeking to {} seconds", seekTarget);
+            m_afterSeekTimestampOffsetUs = m_demuxer.seek(seekTarget);
+            m_seekTargetSecond = -1;
+            {
+                std::lock_guard lock1(m_audioPacketMutex);
+                while (!m_audioPacketQueue.empty()) {
+                    m_audioPacketQueue.pop();
+                }
+            }
+            {
+                std::lock_guard lock2(m_videoPacketMutex);
+                while (!m_videoPacketQueue.empty()) {
+                    m_videoPacketQueue.pop();
+                }
+            }
+            m_seekFlagAudio = true;
+            m_seekFlagVideo = true;
+            m_clock.clear();
         }
 
-        auto* packet = m_demuxer.read();
+        auto packet = m_demuxer.read();
         if (!packet) {
-            NEAPU_LOGI("End of stream reached");
+            NEAPU_LOGI("Media read over");
             break;
         }
 
-        auto onAudioFrame = [this] (AVFrame* frame) {
-            m_audioPost.pushAudioFrame(frame, m_videoPost.waterLevel());
-        };
+        auto tb = packet->stream_index == m_demuxer.videoStreamIndex()
+                            ? m_demuxer.videoStream()->time_base
+                            : m_demuxer.audioStream()->time_base;
+        // NEAPU_LOGD("Packet read: stream_index={}, pts={}", packet->stream_index, av_rescale_q(packet->pts, tb, AV_TIME_BASE_Q));
 
-        auto onVideoFrame = [this] (AVFrame* frame) {
-            m_videoPost.pushVideoFrame(frame);
-        };
 
-        if (packet->stream_index == m_demuxer.audioStreamIndex()) {
-            auto ret = m_audioDecoder.decodePacket(packet, onAudioFrame);
-            if (!ret) {
-                NEAPU_LOGE("Failed to decode audio packet");
+        if (packet->stream_index == m_demuxer.videoStreamIndex()) {
+            std::unique_lock lock(m_videoPacketMutex);
+            while (m_running
+                && m_videoPacketQueue.size() >= MAX_QUEUE_LEN) {
+                m_videoPacketCondVar.wait(lock);
             }
-        } else if (packet->stream_index == m_demuxer.videoStreamIndex()) {
-            auto ret = m_videoDecoder.decodePacket(packet, onVideoFrame);
-            if (!ret) {
-                NEAPU_LOGE("Failed to decode video packet");
+            if (!m_running) {
+                break;
             }
+            m_videoPacketQueue.push(std::move(packet));
+            m_videoPacketCondVar.notify_all();
+        } else if (packet->stream_index == m_demuxer.audioStreamIndex()) {
+            std::unique_lock lock(m_audioPacketMutex);
+            while (m_running
+                && m_audioPacketQueue.size() >= MAX_QUEUE_LEN) {
+                m_audioPacketCondVar.wait(lock);
+            }
+            if (!m_running) {
+                break;
+            }
+            // NEAPU_LOGD("Pushing audio packet to queue. queue_size={}", m_audioPacketQueue.size());
+            m_audioPacketQueue.push(std::move(packet));
+            m_audioPacketCondVar.notify_all();
+        } else {
+            // 字幕/封面等其他流，以后实现
+        }
+    }
+    m_mediaReadOver = true;
+    m_audioPacketCondVar.notify_all();
+    m_videoPacketCondVar.notify_all();
+}
+
+void PlayerPrivate::audioDecodeThreadFunc()
+{
+    // 音频解码线程
+    NEAPU_FUNC_TRACE;
+    m_audioDecodeOver = false;
+    while (m_running) {
+        AVPacketPtr packet;
+        {
+            std::unique_lock lock(m_audioPacketMutex);
+            while (m_running && m_audioPacketQueue.empty() && !m_mediaReadOver) {
+                // NEAPU_LOGD("Waiting for audio packet...");
+                m_audioPacketCondVar.wait(lock);
+            }
+            if (!m_running || m_audioPacketQueue.empty()) {
+                break;
+            }
+            packet = std::move(m_audioPacketQueue.front());
+            m_audioPacketQueue.pop();
+            m_audioPacketCondVar.notify_one();
         }
 
-    }
+        if (m_seekFlagAudio) {
+            if (packet->pts > 0) { // seek后没有重置pts，证明流自带pts不需要偏移
+                m_afterSeekTimestampOffsetUs = 0;
+            } else {
+                NEAPU_LOGW("Audio packet pts is invalid after seek, applying offset: {} us", m_afterSeekTimestampOffsetUs.load());
+            }
+            m_audioDecoder.flush();
+            m_seekFlagAudio = false;
+        }
 
-    if (m_openParams.decodeOverCallback) {
-        m_openParams.decodeOverCallback();
+        // NEAPU_LOGD("pts={}, dts={}", packet->pts, packet->dts);
+
+        // NEAPU_LOGD("Start decoding audio packet. pts={}", packet->pts);
+        auto ret = m_audioDecoder.decodePacket(std::move(packet), [this](AVFrame* frame) {
+            AudioFramePtr audioFrame = m_audioPost.resampleAudioFrame(frame, m_afterSeekTimestampOffsetUs);
+            if (!audioFrame) {
+                NEAPU_LOGE("Failed to resample audio frame");
+                return;
+            }
+            // NEAPU_LOGD("Audio pts={}", audioFrame->pts());
+            std::unique_lock lock(m_audioFrameMutex);
+            while (m_running && m_audioFrame) {
+                // NEAPU_LOGD("Waiting for audio frame to be consumed...");
+                m_audioFrameCondVar.wait(lock);
+            }
+            if (!m_running) {
+                m_audioFrameCondVar.notify_one();
+                return;
+            }
+            m_audioFrame = std::move(audioFrame);
+            m_audioFrameCondVar.notify_one();
+        });
+        if (!ret) {
+            NEAPU_LOGE("Failed to decode audio packet");
+        }
+    }
+    m_audioDecodeOver = true;
+    m_audioFrameCondVar.notify_all();
+}
+
+void PlayerPrivate::videoDecodeThreadFunc() 
+{
+    // 视频解码线程
+    NEAPU_FUNC_TRACE;
+    while (m_running) {
+        AVPacketPtr packet;
+        {
+            std::unique_lock lock(m_videoPacketMutex);
+            while (m_running && m_videoPacketQueue.empty() && !m_mediaReadOver) {
+                m_videoPacketCondVar.wait(lock);
+            }
+            if (!m_running || m_videoPacketQueue.empty()) {
+                break;
+            }
+            packet = std::move(m_videoPacketQueue.front());
+            m_videoPacketQueue.pop();
+            m_videoPacketCondVar.notify_one();
+        }
+
+        if (m_seekFlagVideo) {
+            m_videoDecoder.flush();
+            m_seekFlagVideo = false;
+        }
+
+        // NEAPU_LOGD("Start decoding video packet. pts={}, dts={}", packet->pts, packet->dts);
+        auto ret = m_videoDecoder.decodePacket(std::move(packet), [this](AVFrame* frame) {
+            // 处理解码后的视频帧
+            if (!m_openParams.videoFrameCallback) {
+                return;
+            }
+            
+            VideoFramePtr videoFrame = m_videoPost.copyFrame(frame);
+            if (!videoFrame) {
+                NEAPU_LOGE("Failed to copy video frame");
+                return;
+            }
+            // NEAPU_LOGD("Video pts={}", videoFrame->pts());
+
+            if (m_firstVideoFrame) {
+                m_firstVideoFrame = false;
+            }
+
+            // 视频和音频不同，每一帧都要对齐时间轴
+            (void)m_clock.wait(videoFrame->pts());
+
+            if (!m_demuxer.audioStream()) {
+                // 无音频流时，通过视频帧更新时间点回调
+                if (m_openParams.ptsChangedCallback) {
+                    m_openParams.ptsChangedCallback(videoFrame->pts());
+                }
+            }
+
+            m_openParams.videoFrameCallback(std::move(videoFrame));
+        });
+        if (!ret) {
+            NEAPU_LOGE("Failed to decode video packet");
+        }
     }
 }
 
@@ -242,7 +413,7 @@ bool PlayerPrivate::initVideoDecoder(const AVStream* stream)
             auto testCallback = [&decodeSuccess] (AVFrame* frame) {
                 decodeSuccess = frame != nullptr;
             };
-            if (!m_videoDecoder.decodePacket(packet, testCallback)) {
+            if (!m_videoDecoder.decodePacket(std::move(packet), testCallback)) {
                 NEAPU_LOGW("Failed to decode test video packet");
                 break;
             }

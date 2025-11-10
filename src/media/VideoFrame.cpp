@@ -26,11 +26,13 @@ VideoFrame::~VideoFrame()
         m_vData = nullptr;
     }
 }
-std::unique_ptr<VideoFrame> VideoFrame::fromAVFrame(const void* frame, AVRational timeBase)
+std::unique_ptr<VideoFrame> VideoFrame::fromAVFrame(const void* frame, int timeBaseNum, int timeBaseDen)
 {
     if (!frame) {
         return nullptr;
     }
+
+    AVRational timeBase{timeBaseNum, timeBaseDen};
 
     auto ret = std::make_unique<VideoFrame>();
     auto* avFrame = static_cast<const AVFrame*>(frame);

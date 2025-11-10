@@ -11,6 +11,12 @@ extern "C"{
 #include "MediaUtils.h"
 
 namespace media {
+void AVPacketFreeDeleter::operator()(AVPacket* pkt) const
+{
+    if (pkt) {
+        av_packet_free(&pkt);
+    }
+}
 bool Demuxer::open(const std::string& url)
 {
     NEAPU_FUNC_TRACE;
@@ -58,13 +64,6 @@ bool Demuxer::open(const std::string& url)
     NEAPU_LOGI("Demuxer opened: url={}, video_idx={}, audio_idx={}", url,
                m_videoStream ? m_videoStream->index : -1,
                m_audioStream ? m_audioStream->index : -1);
-    // 预分配一个可复用的 AVPacket
-    m_packet = av_packet_alloc();
-    if (!m_packet) {
-        NEAPU_LOGE("Failed to allocate AVPacket");
-        avformat_close_input(&m_formatCtx);
-        return false;
-    }
     return true;
 }
 
@@ -76,9 +75,6 @@ void Demuxer::close()
     }
     m_videoStream = nullptr;
     m_audioStream = nullptr;
-    if (m_packet) {
-        av_packet_free(&m_packet);
-    }
 }
 
 bool Demuxer::isOpen() const
@@ -86,56 +82,28 @@ bool Demuxer::isOpen() const
     return m_formatCtx != nullptr;
 }
 
-AVPacket* Demuxer::read()
+AVPacketPtr Demuxer::read()
 {
-    if (!m_formatCtx || !m_packet) {
+    if (!m_formatCtx) {
         NEAPU_LOGE("Demuxer is not open or packet is not allocated");
         return nullptr;
     }
 
-    // 如果存在挂起的跳转请求（单位：秒），先执行一次跳转到对应时间点
-    const int64_t pendingSeekSec = m_seekTimestamp.load();
-    if (pendingSeekSec != 0) {
-        int streamIndex = -1;
-        int64_t targetPts = 0;
-        if (m_videoStream) {
-            streamIndex = m_videoStream->index;
-            // 目标 PTS = seconds * time_base.den / time_base.num
-            const AVRational tb = m_videoStream->time_base;
-            if (tb.num != 0) {
-                targetPts = static_cast<int64_t>(static_cast<double>(pendingSeekSec) * tb.den / tb.num);
-            } else {
-                targetPts = 0;
-            }
-            NEAPU_LOGI("Seeking video stream to timestamp: {}s, targetPts: {}, time_base: {}/{}",
-                       pendingSeekSec, targetPts, tb.num, tb.den);
-        } else {
-            // 无视频流时按全局时间基（1e6 为 AV_TIME_BASE）跳转
-            streamIndex = -1;
-            targetPts = pendingSeekSec * 1000000LL;
-            NEAPU_LOGI("Seeking to timestamp: {}s using global time base, targetPts: {}", pendingSeekSec, targetPts);
-        }
-
-        const int sret = av_seek_frame(m_formatCtx, streamIndex, targetPts, AVSEEK_FLAG_BACKWARD);
-        if (sret < 0) {
-            NEAPU_LOGE("Seek failed: {}; code: {}", MediaUtils::getFFmpegError(sret), sret);
-        } else {
-            avformat_flush(m_formatCtx);
-            NEAPU_LOGI("Seek to timestamp: {}s, targetPts: {} success", pendingSeekSec, targetPts);
-        }
-        // 清空挂起跳转标记
-        m_seekTimestamp.store(0);
+    auto* packet = av_packet_alloc();
+    if (!packet) {
+        NEAPU_LOGE("Failed to allocate AVPacket");;
+        return nullptr;
     }
-
-    av_packet_unref(m_packet);
-    const int ret = av_read_frame(m_formatCtx, m_packet);
+    const int ret = av_read_frame(m_formatCtx, packet);
     if (ret < 0) {
-        if (ret != AVERROR_EOF) {
+        if (ret == AVERROR_EOF) {
+            NEAPU_LOGI("End of file reached");
+        } else {
             NEAPU_LOGE("Failed to read frame: {}; code: {}", MediaUtils::getFFmpegError(ret), ret);
         }
         return nullptr;
     }
-    return m_packet;
+    return AVPacketPtr{packet};
 }
 
 int Demuxer::videoStreamIndex() const
@@ -179,16 +147,59 @@ int64_t Demuxer::mediaDuration() const
     return 0;
 }
 
-void Demuxer::seek(int64_t timestamp)
+int64_t Demuxer::seek(int64_t second)
 {
     NEAPU_FUNC_TRACE;
     if (!m_formatCtx) {
         NEAPU_LOGE("Demuxer is not open");
-        return;
+        return -1;
+    }
+    // 优先选择可用的视频流作为锚定流，但要排除封面(仅一帧/附加图片)等非时间轴的视频流
+    AVStream* anchor = nullptr;
+    auto is_cover_video = [this]() -> bool {
+        if (!m_videoStream) return false;
+        // 典型封面流：带有附加图片标志
+        if (m_videoStream->disposition & AV_DISPOSITION_ATTACHED_PIC) return true;
+        // 兼容性判断：明显只有一帧且没有有效帧率的情况也视为封面
+        if (m_videoStream->nb_frames == 1) return true;
+        return false;
+    };
+
+    if (m_videoStream && !is_cover_video()) {
+        anchor = m_videoStream;
+    } else if (m_audioStream) {
+        anchor = m_audioStream;
     }
 
-    m_seekTimestamp = timestamp;
-    NEAPU_LOGI("Seek request queued: {}s", timestamp);
+    const int64_t targetUs = second * AV_TIME_BASE;
+    int flags = AVSEEK_FLAG_BACKWARD;
+    // 纯音频或使用音频流定位时允许非关键帧，提高定位精度
+    if (anchor && anchor->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        flags |= AVSEEK_FLAG_ANY;
+    }
+
+    int ret = -1;
+    if (anchor) {
+        const int64_t streamTs = av_rescale_q(targetUs, AV_TIME_BASE_Q, anchor->time_base);
+        ret = av_seek_frame(m_formatCtx, anchor->index, streamTs, flags);
+        if (ret < 0) {
+            NEAPU_LOGW("Seek by anchor stream failed: {}; fallback to global", MediaUtils::getFFmpegError(ret));
+        } else {
+            avformat_flush(m_formatCtx);
+            NEAPU_LOGI("Seek success (stream): ts={}s, stream_ts={}, flags={}", second, streamTs, flags);
+            return targetUs;
+        }
+    }
+
+    // 全局时间轴回退
+    ret = av_seek_frame(m_formatCtx, -1, targetUs, flags);
+    if (ret < 0) {
+        NEAPU_LOGE("Seek failed: {}; code: {}", MediaUtils::getFFmpegError(ret), ret);
+        return -1;
+    }
+    avformat_flush(m_formatCtx);
+    NEAPU_LOGI("Seek success (global): ts={}s, targetUs={}, flags={}", second, targetUs, flags);
+    return targetUs;
 }
 
 void Demuxer::seekToStart()

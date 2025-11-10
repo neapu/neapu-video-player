@@ -31,19 +31,17 @@ VideoPost::~VideoPost()
         m_swFrame = nullptr;
     }
 }
+
 void VideoPost::initialize(double fps, bool copyBackRender, AVRational timeBase)
 {
     m_fps = fps;
     m_copyBackRender = copyBackRender;
     m_timeBase = timeBase;
-    m_waterLevel = 0;
-    m_initialized = true;
     m_firstFrame = true;
 }
 
 void VideoPost::destroy()
 {
-    m_initialized = false;
     if (m_swsCtx) {
         sws_freeContext(m_swsCtx);
         m_swsCtx = nullptr;
@@ -61,85 +59,8 @@ void VideoPost::destroy()
 
     m_fps = 0;
     m_basePts = 0;
-    m_waterLevel = -1.0;
 }
 
-void VideoPost::clear()
-{
-    std::lock_guard lock(m_mutex);
-    while (!m_videoFrameQueue.empty()) {
-        m_videoFrameQueue.pop();
-    }
-    m_waterLevel = 0;
-}
-
-void VideoPost::pushVideoFrame(const AVFrame* frame)
-{
-    auto videoFrame = copyFrame(frame);
-    if (!videoFrame) {
-        NEAPU_LOGW("Failed to copy video frame");
-        return;
-    }
-
-    std::lock_guard lock(m_mutex);
-    int64_t durationUs = videoFrame->duration();
-    if (durationUs <= 0) {
-        if (m_fps > 0) {
-            // 使用 llround 进行正确的四舍五入，避免 (x + 0.5) 的误差与边界问题
-            durationUs = static_cast<int64_t>(std::llround(1000000.0 / m_fps)); // 约等于 1e6/fps 微秒
-        } else {
-            durationUs = 40000; // 默认25fps -> 40ms
-        }
-    }
-    m_waterLevel += durationUs;
-    if (videoFrame->pts() < 0) {
-        videoFrame->setPts(m_basePts);
-        m_basePts += durationUs;
-    }
-    while (m_waterLevel > MAX_WATER_MARK_US) {
-        NEAPU_LOGW("Video frame queue water level too high: {} us", m_waterLevel);
-        m_waterLevel -= m_videoFrameQueue.front()->duration();
-        m_videoFrameQueue.pop();
-    }
-    m_videoFrameQueue.push(std::move(videoFrame));
-}
-
-VideoFramePtr VideoPost::popVideoFrame()
-{
-    if (!m_initialized) {
-        return nullptr;
-    }
-
-    int64_t targetPts = 0;
-    {
-        std::lock_guard lock(m_mutex);
-        if (m_videoFrameQueue.empty()) {
-            return nullptr;
-        }
-        const auto& frame = m_videoFrameQueue.front();
-        targetPts = frame->pts();
-    }
-
-    if (m_firstFrame) {
-        m_clock.start(0);
-        m_firstFrame = false;
-    }
-
-    m_clock.wait(targetPts);
-
-    std::lock_guard lock(m_mutex);
-    auto videoFrame = std::move(m_videoFrameQueue.front());
-    m_videoFrameQueue.pop();
-    m_waterLevel -= videoFrame->duration();
-    // NEAPU_LOGD("Pop video. pts: {}", videoFrame->pts());
-    return videoFrame;
-}
-
-bool VideoPost::isQueueEmpty()
-{
-    std::lock_guard lock(m_mutex);
-    return m_videoFrameQueue.empty();
-}
 VideoFramePtr VideoPost::copyFrame(const AVFrame* frame)
 {
     if (!frame) {
@@ -147,7 +68,7 @@ VideoFramePtr VideoPost::copyFrame(const AVFrame* frame)
     }
 
     if (frame->format == AV_PIX_FMT_YUV420P) {
-        return VideoFrame::fromAVFrame(frame, m_timeBase);
+        return VideoFrame::fromAVFrame(frame, m_timeBase.num, m_timeBase.den);
     }
 
     if (frame->format == AV_PIX_FMT_D3D11) {
@@ -155,7 +76,7 @@ VideoFramePtr VideoPost::copyFrame(const AVFrame* frame)
     }
 
     if (convertFrame(frame)) {
-        return VideoFrame::fromAVFrame(m_targetFrame, m_timeBase);
+        return VideoFrame::fromAVFrame(m_targetFrame, m_timeBase.num, m_timeBase.den);
     }
 
     NEAPU_LOGE("Failed to convert frame to YUV420P");
@@ -172,7 +93,7 @@ VideoFramePtr VideoPost::processHWFrame(const AVFrame* frame)
     }
 #endif
     if (!m_copyBackRender) {
-        return VideoFrame::fromAVFrame(frame, m_timeBase);
+        return VideoFrame::fromAVFrame(frame, m_timeBase.num, m_timeBase.den);
     }
 
     if (!m_swFrame) {
@@ -200,7 +121,7 @@ VideoFramePtr VideoPost::processHWFrame(const AVFrame* frame)
     m_swFrame->color_trc = frame->color_trc;
 
     if (m_swFrame->format == AV_PIX_FMT_YUV420P) {
-        return VideoFrame::fromAVFrame(m_swFrame, m_timeBase);
+        return VideoFrame::fromAVFrame(m_swFrame, m_timeBase.num, m_timeBase.den);
     }
 
     if (!convertFrame(m_swFrame)) {
@@ -208,7 +129,7 @@ VideoFramePtr VideoPost::processHWFrame(const AVFrame* frame)
         return nullptr;
     }
 
-    return VideoFrame::fromAVFrame(m_targetFrame, m_timeBase);
+    return VideoFrame::fromAVFrame(m_targetFrame, m_timeBase.num, m_timeBase.den);
 }
 
 bool VideoPost::convertFrame(const AVFrame* frame)

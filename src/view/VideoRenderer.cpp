@@ -25,36 +25,38 @@ static QShader loadShader(const QString& name)
     return QShader::fromSerialized(file.readAll());
 }
 
-VideoRenderer::VideoRenderer(const VideoFrameCallback& cb, QWidget* parent)
-    : QRhiWidget(parent), m_videoFrameCallback(cb)
+VideoRenderer::VideoRenderer(QWidget* parent)
+    : QRhiWidget(parent)
 {
 }
 VideoRenderer::~VideoRenderer()
 {
     NEAPU_FUNC_TRACE;
 }
-void VideoRenderer::start()
+
+void VideoRenderer::renderFrame(media::VideoFramePtr frame) 
 {
-    if (!m_stopFlag) {
+    if (!frame) {
+        NEAPU_LOGW("Received null video frame");
         return;
     }
-
-    m_stopFlag = false;
-    m_recvFrameThread = std::thread([this]() { recvFrameThread(); });
+    {
+        std::lock_guard<std::mutex> lock(m_frameMutex);
+        m_currentFrame = std::move(frame);
+    }
+    
+    update();
 }
+
 void VideoRenderer::stop(bool flush)
 {
     NEAPU_FUNC_TRACE;
-    m_stopFlag = true;
-    if (m_recvFrameThread.joinable()) {
-        m_recvFrameThread.join();
-    }
-
+    
     m_currentFrame.reset();
     m_currentWidth = 0;
     m_currentHeight = 0;
     m_currentPixelFormat = media::VideoFrame::PixelFormat::NONE;
-
+    
     if (flush) {
         QMetaObject::invokeMethod(this, [this]() {
             createEmptyPipeline();
@@ -179,22 +181,7 @@ ID3D11DeviceContext* VideoRenderer::d3d11DeviceContext() const
 {
     return m_d3d11DeviceContext;
 }
-void VideoRenderer::recvFrameThread()
-{
-    NEAPU_FUNC_TRACE;
-    while (!m_stopFlag) {
-        auto frame = m_videoFrameCallback();
-        if (!frame) continue;
-        // NEAPU_LOGD("Received video frame, {}x{}, format={}", frame->width(), frame->height(), static_cast<int>(frame->pixelFormat()));
 
-        {
-            std::lock_guard lock(m_frameMutex);
-            m_currentFrame = std::move(frame);
-        }
-
-        update();
-    }
-}
 bool VideoRenderer::createPipeline()
 {
     NEAPU_FUNC_TRACE;

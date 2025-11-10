@@ -12,8 +12,6 @@ public:
     AudioDecoder() = default;
     ~AudioDecoder() override = default;
 
-    bool initialize(const AVStream* stream) override;
-
     int sampleRate() const;
     int channels() const;
 };

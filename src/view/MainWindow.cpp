@@ -35,9 +35,9 @@ MainWindow::~MainWindow()
     NEAPU_FUNC_TRACE;
     disconnect(m_audioRenderer, nullptr, this, nullptr);
     if (m_player->isOpen()) {
+        m_player->stop();
         m_audioRenderer->stop();
         m_videoRenderer->stop(false);
-        m_player->stop();
         m_player->closeMedia();
     }
 }
@@ -56,9 +56,7 @@ void MainWindow::createLayout()
     setCentralWidget(centralWidget);
 
     auto* layout = new QVBoxLayout(centralWidget);
-    m_videoRenderer = new VideoRenderer([this]() {
-        return m_player->getVideoFrame();
-    }, centralWidget);
+    m_videoRenderer = new VideoRenderer(centralWidget);
     layout->addWidget(m_videoRenderer, 1);
     m_controlWidget = new ControlWidget(m_player, centralWidget);
     m_controlWidget->setFixedHeight(80);
@@ -90,6 +88,10 @@ void MainWindow::onOpenFile()
     params.decodeOverCallback = [this]() {
         m_isDecodeOver = true;
     };
+    params.videoFrameCallback = [this](media::VideoFramePtr frame) {
+        // 不需要切换线程
+        m_videoRenderer->renderFrame(std::move(frame));
+    };
     params.ptsChangedCallback = [this](int64_t currentPts) {
         QMetaObject::invokeMethod(m_controlWidget, [this, currentPts]() {
             m_controlWidget->setCurrentPts(currentPts);
@@ -115,10 +117,6 @@ void MainWindow::onOpenFile()
     m_isDecodeOver = false;
     if (m_player->hasAudioStream()) {
         m_audioRenderer->start(m_player->audioSampleRate(), m_player->audioChannels());
-    }
-
-    if (m_player->hasVideoStream()) {
-        m_videoRenderer->start();
     }
 
     m_player->play();

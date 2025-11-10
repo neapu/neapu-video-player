@@ -4,6 +4,7 @@
 
 #pragma once
 #include <functional>
+#include "Demuxer.h"
 
 typedef struct AVCodecContext AVCodecContext;
 typedef struct AVCodec AVCodec;
@@ -21,7 +22,9 @@ public:
     virtual bool initialize(const AVStream* stream);
     virtual void destroy();
 
-    virtual bool decodePacket(AVPacket* packet, const FrameCallback& callback);
+    virtual bool decodePacket(AVPacketPtr packet, const FrameCallback& callback);
+
+    virtual void flush();
 
 protected:
     virtual bool initializeCodecContext(const AVStream* stream);

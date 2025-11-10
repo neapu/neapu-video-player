@@ -8,15 +8,6 @@ extern "C"{
 }
 
 namespace media {
-bool AudioDecoder::initialize(const AVStream* stream)
-{
-    if (!DecoderBase::initialize(stream)) {
-        return false;
-    }
-
-    return true;
-}
-
 int AudioDecoder::sampleRate() const
 {
     if (m_stream) {

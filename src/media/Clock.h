@@ -13,17 +13,13 @@ namespace media {
 
 class Clock {
 public:
-    void start(int64_t pts);
     void clear();
 
-    bool isStarted();
     void wait(int64_t pts);
-    // 通过音频pts反向修正起始时间点，达到音视频同步的目的
-    void correctStartTimePoint(int64_t pts);
+    void setAudioPts(int64_t audioPts);
 
 private:
-    std::chrono::steady_clock::time_point m_startTimePoint;
-    std::mutex m_mutex; // 保护起始时间点的并发访问
+    std::atomic<int64_t> m_startTimePointUs{0};
 };
 
 } // namespace media
