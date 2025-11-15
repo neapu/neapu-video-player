@@ -7,7 +7,7 @@
 #include <logger.h>
 
 namespace view {
-ControlWidget::ControlWidget(std::unique_ptr<media::Player>& player, QWidget* parent)
+ControlWidget::ControlWidget(std::unique_ptr<media::MediaDecoder>& player, QWidget* parent)
     : QWidget(parent), m_player(player)
 {
     auto* layout = new QVBoxLayout(this);

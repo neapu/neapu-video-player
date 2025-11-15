@@ -5,7 +5,7 @@
 #pragma once
 #include <QMainWindow>
 #include <memory>
-#include "../media/Player.h"
+#include "../media/MediaDecoder.h"
 #include "ControlWidget.h"
 
 namespace view {
@@ -29,7 +29,7 @@ private:
     VideoRenderer* m_videoRenderer{nullptr};
     AudioRenderer* m_audioRenderer{nullptr};
     ControlWidget* m_controlWidget{nullptr};
-    std::unique_ptr<media::Player> m_player{nullptr};
+    std::unique_ptr<media::MediaDecoder> m_player{nullptr};
     bool m_isDecodeOver{false};
 };
 

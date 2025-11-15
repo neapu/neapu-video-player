@@ -4,7 +4,7 @@
 
 #include "MainWindow.h"
 #include <QMenuBar>
-#include "../media/Player.h"
+#include "../media/MediaDecoder.h"
 #include "AudioRenderer.h"
 #include "VideoRenderer.h"
 #include "logger.h"
@@ -22,7 +22,7 @@ MainWindow::MainWindow()
 
     createMenus();
 
-    m_player = std::make_unique<media::Player>();
+    m_player = std::make_unique<media::MediaDecoder>();
     m_audioRenderer = new AudioRenderer([this]() {
         return m_player->getAudioFrame();
     }, this);
@@ -34,12 +34,12 @@ MainWindow::~MainWindow()
 {
     NEAPU_FUNC_TRACE;
     disconnect(m_audioRenderer, nullptr, this, nullptr);
-    if (m_player->isOpen()) {
-        m_player->stop();
-        m_audioRenderer->stop();
-        m_videoRenderer->stop(false);
-        m_player->closeMedia();
-    }
+    // if (m_player->isOpen()) {
+    //     m_player->stop();
+    //     m_audioRenderer->stop();
+    //     m_videoRenderer->stop(false);
+    //     m_player->closeMedia();
+    // }
 }
 void MainWindow::createMenus()
 {
@@ -76,12 +76,12 @@ void MainWindow::onOpenFile()
         return;
     }
 
-    if (m_player->isOpen()) {
-        m_player->stop();
-        m_videoRenderer->stop(true);
-        m_audioRenderer->stop();
-        m_player->closeMedia();
-    }
+    // if (m_player->isOpen()) {
+    //     m_player->stop();
+    //     m_videoRenderer->stop(true);
+    //     m_audioRenderer->stop();
+    //     m_player->closeMedia();
+    // }
 
     media::OpenMediaParams params;
     params.url = filePath.toStdString();
@@ -92,7 +92,7 @@ void MainWindow::onOpenFile()
         // 不需要切换线程
         m_videoRenderer->renderFrame(std::move(frame));
     };
-    params.ptsChangedCallback = [this](int64_t currentPts) {
+    params.timestampChangedCallback = [this](int64_t currentPts) {
         QMetaObject::invokeMethod(m_controlWidget, [this, currentPts]() {
             m_controlWidget->setCurrentPts(currentPts);
         }, Qt::QueuedConnection);
