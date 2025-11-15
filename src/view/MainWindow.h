@@ -5,7 +5,6 @@
 #pragma once
 #include <QMainWindow>
 #include <memory>
-#include "../media/MediaDecoder.h"
 #include "ControlWidget.h"
 
 namespace view {
@@ -21,15 +20,10 @@ private:
     void createMenus();
     void createLayout();
 
-private slots:
-    void onOpenFile();
-    void onAudioPlayingStateChanged(bool playing);
-
 private:
     VideoRenderer* m_videoRenderer{nullptr};
     AudioRenderer* m_audioRenderer{nullptr};
     ControlWidget* m_controlWidget{nullptr};
-    std::unique_ptr<media::MediaDecoder> m_player{nullptr};
     bool m_isDecodeOver{false};
 };
 

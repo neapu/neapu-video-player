@@ -22,12 +22,24 @@ find_library(SWRESAMPLE_LIBRARY NAMES swresample PATHS ${FFMPEG_LIB_DIR})
 message(STATUS "SWRESAMPLE_LIBRARY: ${SWRESAMPLE_LIBRARY}")
 
 add_library(${LIB_NAME} STATIC
-        MediaDecoder.cpp
-        MediaDecoder.h
         MediaPlayer.cpp
         MediaPlayer.h
         MediaFrame.cpp
         MediaFrame.h
+        Demuxer.cpp
+        Demuxer.h
+        Helper.cpp
+        Helper.h
+        Decoder.cpp
+        Decoder.h
+        VideoDecoder.cpp
+        VideoDecoder.h
+        AudioDecoder.cpp
+        AudioDecoder.h
+        AudioFrame.cpp
+        AudioFrame.h
+        VideoFrame.cpp
+        VideoFrame.h
 
 )
 

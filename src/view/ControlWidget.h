@@ -8,7 +8,6 @@
 #include <QSlider>
 #include <QPushButton>
 #include <QBoxLayout>
-#include "../media/MediaDecoder.h"
 #include <QRecursiveMutex>
 
 namespace view {
@@ -16,7 +15,7 @@ namespace view {
 class ControlWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit ControlWidget(std::unique_ptr<media::MediaDecoder>& player, QWidget* parent = nullptr);
+    explicit ControlWidget(QWidget* parent = nullptr);
     ~ControlWidget() override;
 
     void setDuration(int64_t durationUs);
@@ -33,8 +32,6 @@ private:
     void onVolumeSliderMoved(int value);
 
 private:
-    std::unique_ptr<media::MediaDecoder>& m_player;
-
     QLabel* m_currentTimeLabel{nullptr};
     QLabel* m_totalTimeLabel{nullptr};
     QSlider* m_timelineSlider{nullptr};

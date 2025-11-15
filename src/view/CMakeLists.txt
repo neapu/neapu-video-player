@@ -5,12 +5,12 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Gui Widgets ShaderTools)
 qt_add_library(${LIB_NAME} STATIC
         MainWindow.cpp
         MainWindow.h
-        VideoRenderer.cpp
-        VideoRenderer.h
         AudioRenderer.cpp
         AudioRenderer.h
         ControlWidget.cpp
         ControlWidget.h
+        VideoRenderer.cpp
+        VideoRenderer.h
 )
 
 target_link_libraries(${LIB_NAME} PUBLIC Qt6::Gui Qt6::Widgets Qt6::GuiPrivate)

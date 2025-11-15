@@ -10,7 +10,9 @@
 #include <QSettings>
 
 namespace media {
-
+class Demuxer;
+class VideoDecoder;
+class AudioDecoder;
 class MediaPlayer : public QObject {
     Q_OBJECT
 public:
@@ -32,7 +34,9 @@ signals:
 
 private:
     const QSettings* m_settings;
-
+    Demuxer* m_demuxer{nullptr};
+    VideoDecoder* m_videoDecoder{nullptr};
+    AudioDecoder* m_audioDecoder{nullptr};
 };
 
 } // namespace media

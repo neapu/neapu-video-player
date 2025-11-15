@@ -7,8 +7,8 @@
 #include <logger.h>
 
 namespace view {
-ControlWidget::ControlWidget(std::unique_ptr<media::MediaDecoder>& player, QWidget* parent)
-    : QWidget(parent), m_player(player)
+ControlWidget::ControlWidget(QWidget* parent)
+    : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 10, 10, 10);
@@ -157,19 +157,11 @@ void ControlWidget::createControlLayout(QBoxLayout* parentLayout)
 void ControlWidget::onTimelineSliderMoved(int value)
 {
     QMutexLocker locker(&m_mutex);
-    if (m_player) {
-        NEAPU_LOGI("Seeking to {} seconds", value);
-        m_player->seek(value);
-    }
 }
 void ControlWidget::onTimelineSliderPressed()
 {
     QMutexLocker locker(&m_mutex);
     m_timelineSliderDragging = true;
-    if (m_player) {
-        NEAPU_LOGI("Seeking to {} seconds", m_timelineSlider->value());
-        m_player->seek(m_timelineSlider->value());
-    }
 }
 void ControlWidget::onTimelineSliderReleased()
 {
