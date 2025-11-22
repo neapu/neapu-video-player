@@ -19,13 +19,28 @@ MainWindow::MainWindow()
     resize(800, 600);
     setMinimumSize(800, 600);
 
+    m_settings = new QSettings("NeapuVideoPlayer.ini", QSettings::IniFormat, this);
+    m_player = new Player(this);
+    m_audioRenderer = new AudioRenderer([this]() {
+        return m_player->getAudioFrame();
+    }, this);
+
+
     createMenus();
 
     createLayout();
+
+    m_player->setVideoRenderer(m_videoRenderer);
+    m_player->setAudioRenderer(m_audioRenderer);
+
+    connect(m_videoRenderer, &VideoRenderer::initialized, [this]() {
+        m_player->setD3D11Device(m_videoRenderer->getD3D11Device());
+    });
 }
 MainWindow::~MainWindow()
 {
     NEAPU_FUNC_TRACE;
+    m_player->close();
 }
 void MainWindow::createMenus()
 {
@@ -33,7 +48,10 @@ void MainWindow::createMenus()
     auto* openAction = fineManu->addAction(tr("&Open"));
     auto* exitAction = fineManu->addAction(tr("E&xit"));
 
-    // connect(openAction, &QAction::triggered, this, &MainWindow::onOpenFile);
+    connect(openAction, &QAction::triggered, [this]() {
+        m_player->open();
+        m_player->play();
+    });
     connect(exitAction, &QAction::triggered, [this]() { close(); });
 }
 void MainWindow::createLayout()

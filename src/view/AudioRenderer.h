@@ -4,13 +4,13 @@
 
 #pragma once
 #include <QObject>
-#include "../media/AudioFrame.h"
+#include "../media/Frame.h"
 #include <thread>
 
 typedef struct ma_device ma_device;
 
 namespace view {
-using AudioFrameCallback = std::function<media::AudioFramePtr()>;
+using AudioFrameCallback = std::function<media::FramePtr()>;
 class AudioRenderer:public QObject {
     Q_OBJECT
 public:
@@ -35,7 +35,7 @@ private:
 
     ma_device* m_device{nullptr};
 
-    media::AudioFramePtr m_currentData{nullptr};
+    media::FramePtr m_currentData{nullptr};
     size_t m_offset{0};
 };
 

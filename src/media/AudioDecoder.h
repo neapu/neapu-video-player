@@ -1,15 +1,31 @@
 //
-// Created by liu86 on 2025/11/15.
+// Created by liu86 on 2025/11/20.
 //
 
 #pragma once
-#include "Decoder.h"
+#include "DecoderBase.h"
+
+typedef struct SwrContext SwrContext;
+typedef struct AVChannelLayout AVChannelLayout;
 
 namespace media {
-class AudioDecoder : public Decoder {
-    Q_OBJECT
+
+class AudioDecoder : public DecoderBase{
 public:
-    explicit AudioDecoder(QObject* parent = nullptr);
-    ~AudioDecoder() override = default;
+    AudioDecoder(AVStream* stream, const AVPacketCallback& packetCallback);
+    ~AudioDecoder() override;
+
+    int sampleRate() const;
+    int channelCount() const;
+
+protected:
+    FramePtr postProcess(AVFrame* avFrame) override;
+
+protected:
+    SwrContext* m_swrCtx{nullptr};
+    int m_lastSampleRate{0};
+    int m_lastSampleFmt{-1};
+    AVChannelLayout* m_lastChLayout{nullptr};
 };
+
 } // namespace media

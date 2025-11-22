@@ -1,17 +1,31 @@
-//
-// Created by liu86 on 2025/11/15.
-//
-
 #include "Helper.h"
 extern "C"{
-#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavcodec/packet.h>
 }
 
 namespace media {
-void AVPacketFreeDeleter::operator()(AVPacket* pkt) const
+std::string getFFmpegErrorString(int errNum)
+{
+    char errBuf[AV_ERROR_MAX_STRING_SIZE] = {0};
+    av_strerror(errNum, errBuf, sizeof(errBuf));
+    return std::string(errBuf);
+}
+
+void AVPacketDeleter::operator()(AVPacket* pkt) const
 {
     if (pkt) {
         av_packet_free(&pkt);
     }
+}
+std::string getAVCodecIDString(int codecId)
+{
+    // TODO: implement codec name retrieval
+    return "UNKNOWN:" + std::to_string(codecId);
+}
+std::string getAVPixelFormatString(int pixFmt)
+{
+    // TODO: implement pixel format name retrieval
+    return "UNKNOWN:" + std::to_string(pixFmt);
 }
 } // namespace media

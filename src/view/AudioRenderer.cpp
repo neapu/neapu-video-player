@@ -80,19 +80,22 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
             break;
         }
         setPlaying(true);
-        size_t availableSize = m_currentData->len() - m_offset;
+        size_t frameBytes = static_cast<size_t>(m_currentData->nbSamples()) * channels * sizeof(int16_t);
+        if (m_offset > frameBytes) m_offset = frameBytes; // 防御式修正
+        size_t availableSize = frameBytes - m_offset;
         const size_t toCopy = std::min(availableSize, requireSize - copyOffset);
-        std::memcpy(static_cast<uint8_t*>(pOutput) + copyOffset, m_currentData->data() + m_offset, toCopy);
+        std::memcpy(static_cast<uint8_t*>(pOutput) + copyOffset, m_currentData->data(0) + m_offset, toCopy);
         m_offset += toCopy;
         copyOffset += toCopy;
+        if (m_offset >= frameBytes) {
+            m_currentData.reset();
+            m_offset = 0;
+        }
     }
 }
 void AudioRenderer::updateCurrentData()
 {
     if (!m_audioFrameCallback) return;
-    if (m_currentData && m_currentData->len() == m_offset) {
-        m_currentData.reset();
-    }
     if (!m_currentData) {
         m_currentData = m_audioFrameCallback();
         m_offset = 0;

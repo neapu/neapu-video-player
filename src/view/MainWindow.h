@@ -6,6 +6,8 @@
 #include <QMainWindow>
 #include <memory>
 #include "ControlWidget.h"
+#include "Player.h"
+#include <QSettings>
 
 namespace view {
 class VideoRenderer;
@@ -25,6 +27,9 @@ private:
     AudioRenderer* m_audioRenderer{nullptr};
     ControlWidget* m_controlWidget{nullptr};
     bool m_isDecodeOver{false};
+
+    QSettings* m_settings{nullptr};
+    Player* m_player{nullptr};
 };
 
 } // namespace view

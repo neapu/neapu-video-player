@@ -1,7 +1,5 @@
 set(LIB_NAME "media")
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
-
 if (FFMPEG_DIR)
     message(STATUS "FFMPEG_DIR is set to: ${FFMPEG_DIR}")
 else ()
@@ -22,28 +20,24 @@ find_library(SWRESAMPLE_LIBRARY NAMES swresample PATHS ${FFMPEG_LIB_DIR})
 message(STATUS "SWRESAMPLE_LIBRARY: ${SWRESAMPLE_LIBRARY}")
 
 add_library(${LIB_NAME} STATIC
-        MediaPlayer.cpp
-        MediaPlayer.h
-        MediaFrame.cpp
-        MediaFrame.h
+        MediaDecoder.cpp
+        MediaDecoder.h
+        Frame.cpp
+        Frame.h
+        MediaDecoderImpl.cpp
+        MediaDecoderImpl.h
         Demuxer.cpp
         Demuxer.h
         Helper.cpp
         Helper.h
-        Decoder.cpp
-        Decoder.h
+        DecoderBase.cpp
+        DecoderBase.h
         VideoDecoder.cpp
         VideoDecoder.h
         AudioDecoder.cpp
         AudioDecoder.h
-        AudioFrame.cpp
-        AudioFrame.h
-        VideoFrame.cpp
-        VideoFrame.h
-
 )
 
-target_link_libraries(${LIB_NAME} PUBLIC Qt6::Core)
 target_link_libraries(${LIB_NAME} PUBLIC logger)
 target_include_directories(${LIB_NAME} PUBLIC ${FFMPEG_INCLUDE_DIR})
 target_link_libraries(${LIB_NAME} PUBLIC
