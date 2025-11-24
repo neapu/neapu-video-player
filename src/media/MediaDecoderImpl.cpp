@@ -63,9 +63,13 @@ void MediaDecoderImpl::seek(double timePointSeconds)
     if (!m_demuxer) {
         return;
     }
-    int sec = static_cast<int>(timePointSeconds);
-    if (sec < 0) sec = 0;
-    m_demuxer->seek(sec);
+    m_demuxer->seek(timePointSeconds);
+    if (m_audioDecoder) {
+        m_audioDecoder->flush();
+    }
+    if (m_videoDecoder) {
+        m_videoDecoder->flush();
+    }
 }
 
 int MediaDecoderImpl::audioSampleRate() const
@@ -90,6 +94,14 @@ bool MediaDecoderImpl::hasAudio() const
 bool MediaDecoderImpl::hasVideo() const
 {
     return m_demuxer->videoStream() != nullptr;
+}
+
+double MediaDecoderImpl::durationSeconds() const
+{
+    if (!m_demuxer) {
+        return 0.0;
+    }
+    return m_demuxer->durationSeconds();
 }
 
 void MediaDecoderImpl::createAudioDecoder(const CreateParam& param)
@@ -133,7 +145,7 @@ void MediaDecoderImpl::createVideoDecoder(const CreateParam& param)
 #endif
             // 测试解码一帧，确保解码器可用
             auto frame = m_videoDecoder->getFrame();
-            m_demuxer->seek(0); // 重置回文件开头
+            m_demuxer->seek(0.0);
             if (!frame) {
                 // 正常现象，有些硬件解码器就是能初始化成功但是无法解码
                 NEAPU_LOGW("Failed to decode test frame with method {}", static_cast<int>(method));

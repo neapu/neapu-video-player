@@ -34,6 +34,7 @@ public:
     void play();
     void pause();
     void stop();
+    void seek(double seconds);
 
     media::FramePtr getAudioFrame();
 
@@ -42,6 +43,10 @@ public:
 #ifdef _WIN32
     void setD3D11Device(ID3D11Device* device);
 #endif
+
+signals:
+    void mediaOpened(double durationSeconds);
+    void currentTimeChanged(double seconds);
 
 private:
     void AudioThreadFunc();
@@ -68,6 +73,9 @@ private:
 
     std::atomic_bool m_videoStopped{false};
     std::atomic_bool m_audioStopped{false};
+    std::atomic_bool m_videoPaused{false};
+    std::atomic_bool m_audioPaused{false};
+    std::atomic_bool m_seeking{false};
 
     AudioRenderer* m_audioRenderer{nullptr};
     VideoRenderer* m_videoRenderer{nullptr};

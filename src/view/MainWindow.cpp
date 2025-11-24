@@ -62,7 +62,7 @@ void MainWindow::createLayout()
     auto* layout = new QVBoxLayout(centralWidget);
     m_videoRenderer = new VideoRenderer(centralWidget);
     layout->addWidget(m_videoRenderer, 1);
-    m_controlWidget = new ControlWidget(centralWidget);
+    m_controlWidget = new ControlWidget(m_player, centralWidget);
     m_controlWidget->setFixedHeight(80);
     layout->addWidget(m_controlWidget, 0);
     layout->setContentsMargins(0, 0, 0, 0);

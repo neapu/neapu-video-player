@@ -37,7 +37,9 @@ public:
 
     bool isEof() const { return m_isEof.load(); }
 
-    void seek(int sec);
+    void seek(double seconds);
+
+    double durationSeconds() const;
 
 private:
     void readFromFile();

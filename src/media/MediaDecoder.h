@@ -36,6 +36,8 @@ public:
     virtual bool hasVideo() const = 0;
     virtual bool hasAudio() const = 0;
 
+    virtual double durationSeconds() const = 0;
+
 };
 
 } // namespace media

@@ -98,4 +98,14 @@ DecoderBase::DecodeError DecoderBase::decode()
     }
     return DecodeError::None;
 }
+void DecoderBase::flush()
+{
+    std::lock_guard lock(m_mutex);
+    while (!m_frameQueue.empty()) {
+        m_frameQueue.pop();
+    }
+    if (m_codecCtx) {
+        avcodec_flush_buffers(m_codecCtx);
+    }
+}
 } // namespace media

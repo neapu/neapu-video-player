@@ -28,6 +28,8 @@ public:
     bool hasAudio() const override;
     bool hasVideo() const override;
 
+    double durationSeconds() const override;
+
 private:
     void createAudioDecoder(const CreateParam& param);
     void createVideoDecoder(const CreateParam& param);

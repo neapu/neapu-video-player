@@ -35,6 +35,7 @@ public:
         Eof,
     };
     auto getFrame() -> std::expected<FramePtr, DecodeError>;
+    void flush();
 
 protected:
     virtual void initializeContext();

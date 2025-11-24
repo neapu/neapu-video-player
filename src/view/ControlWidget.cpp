@@ -7,8 +7,8 @@
 #include <logger.h>
 
 namespace view {
-ControlWidget::ControlWidget(QWidget* parent)
-    : QWidget(parent)
+ControlWidget::ControlWidget(Player* player, QWidget* parent)
+    : QWidget(parent), m_player(player)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 10, 10, 10);
@@ -16,41 +16,74 @@ ControlWidget::ControlWidget(QWidget* parent)
     createTimelineLayout(layout);
     createControlLayout(layout);
     setLayout(layout);
+
+    connect(m_player, &Player::mediaOpened, this, &ControlWidget::onDurationChanged);
+    connect(m_player, &Player::currentTimeChanged, this, &ControlWidget::onPlayingTimeChanged);
 }
 ControlWidget::~ControlWidget() {}
 
-void ControlWidget::setDuration(int64_t durationUs)
+void ControlWidget::onDurationChanged(double durationSeconds)
 {
-    // 转换为秒
-    m_durationSeconds = static_cast<int>(durationUs / 1000000);
+    m_duration = durationSeconds;
 
-    auto hours = m_durationSeconds / 3600;
-    auto minutes = (m_durationSeconds % 3600) / 60;
-    auto seconds = m_durationSeconds % 60;
+    int hours = static_cast<int>(m_duration) / 3600;
+    int minutes = (static_cast<int>(m_duration) % 3600) / 60;
+    int seconds = static_cast<int>(m_duration) % 60;
     m_totalTimeLabel->setText(QString("%1:%2:%3")
                                   .arg(hours, 2, 10, QChar('0'))
                                   .arg(minutes, 2, 10, QChar('0'))
                                   .arg(seconds, 2, 10, QChar('0')));
-    m_timelineSlider->setMaximum(m_durationSeconds);
-    NEAPU_LOGI("Set duration: {} seconds", m_durationSeconds);
+    m_timelineSlider->setMaximum(static_cast<int>(m_duration*1000));
 }
 
-void ControlWidget::setCurrentPts(int64_t currentPtsUs)
+void ControlWidget::onPlayingTimeChanged(double seconds)
 {
-    m_currentPtsSeconds = static_cast<int>(currentPtsUs / 1000000);
-
-    auto hours = m_currentPtsSeconds / 3600;
-    auto minutes = (m_currentPtsSeconds % 3600) / 60;
-    auto seconds = m_currentPtsSeconds % 60;
+    m_currentTime = seconds;
+    int hours = static_cast<int>(m_currentTime) / 3600;
+    int minutes = (static_cast<int>(m_currentTime) % 3600) / 60;
+    int secs = static_cast<int>(m_currentTime) % 60;
     m_currentTimeLabel->setText(QString("%1:%2:%3")
                                     .arg(hours, 2, 10, QChar('0'))
                                     .arg(minutes, 2, 10, QChar('0'))
-                                    .arg(seconds, 2, 10, QChar('0')));
+                                    .arg(secs, 2, 10, QChar('0')));
     QMutexLocker locker(&m_mutex);
     if (!m_timelineSliderDragging) {
-        m_timelineSlider->setValue(m_currentPtsSeconds);
+        m_timelineSlider->setValue(static_cast<int>(m_currentTime*1000));
     }
 }
+
+// void ControlWidget::setDuration(int64_t durationUs)
+// {
+//     // 转换为秒
+//     m_durationSeconds = static_cast<int>(durationUs / 1000000);
+//
+//     auto hours = m_durationSeconds / 3600;
+//     auto minutes = (m_durationSeconds % 3600) / 60;
+//     auto seconds = m_durationSeconds % 60;
+//     m_totalTimeLabel->setText(QString("%1:%2:%3")
+//                                   .arg(hours, 2, 10, QChar('0'))
+//                                   .arg(minutes, 2, 10, QChar('0'))
+//                                   .arg(seconds, 2, 10, QChar('0')));
+//     m_timelineSlider->setMaximum(m_durationSeconds);
+//     NEAPU_LOGI("Set duration: {} seconds", m_durationSeconds);
+// }
+//
+// void ControlWidget::setCurrentPts(int64_t currentPtsUs)
+// {
+//     m_currentPtsSeconds = static_cast<int>(currentPtsUs / 1000000);
+//
+//     auto hours = m_currentPtsSeconds / 3600;
+//     auto minutes = (m_currentPtsSeconds % 3600) / 60;
+//     auto seconds = m_currentPtsSeconds % 60;
+//     m_currentTimeLabel->setText(QString("%1:%2:%3")
+//                                     .arg(hours, 2, 10, QChar('0'))
+//                                     .arg(minutes, 2, 10, QChar('0'))
+//                                     .arg(seconds, 2, 10, QChar('0')));
+//     QMutexLocker locker(&m_mutex);
+//     if (!m_timelineSliderDragging) {
+//         m_timelineSlider->setValue(m_currentPtsSeconds);
+//     }
+// }
 
 void ControlWidget::createTimelineLayout(QBoxLayout* parentLayout)
 {
@@ -157,11 +190,17 @@ void ControlWidget::createControlLayout(QBoxLayout* parentLayout)
 void ControlWidget::onTimelineSliderMoved(int value)
 {
     QMutexLocker locker(&m_mutex);
+    double sec = static_cast<double>(value) / 1000.0;
+    NEAPU_LOGI("Timeline Slider Moved: {} seconds", sec);
+    m_player->seek(sec);
 }
 void ControlWidget::onTimelineSliderPressed()
 {
     QMutexLocker locker(&m_mutex);
     m_timelineSliderDragging = true;
+    double sec = static_cast<double>(m_timelineSlider->value()) / 1000.0;
+    NEAPU_LOGI("Timeline Slider Pressed: {} seconds", sec);
+    m_player->seek(sec);
 }
 void ControlWidget::onTimelineSliderReleased()
 {

@@ -8,6 +8,8 @@
 #include "Helper.h"
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/rational.h>
 }
 
 namespace media {
@@ -127,10 +129,12 @@ AVPacketPtr Demuxer::getAudioPacket()
     m_audioPacketQueue.pop();
     return pkt;
 }
-void Demuxer::seek(int sec)
+void Demuxer::seek(double seconds)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const int64_t timestamp = static_cast<int64_t>(sec < 0 ? 0 : sec) * AV_TIME_BASE;
+    double sec = seconds;
+    if (sec < 0.0) sec = 0.0;
+    const int64_t timestamp = static_cast<int64_t>(sec * AV_TIME_BASE);
     int ret = av_seek_frame(m_fmtCtx, -1, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
         NEAPU_LOGE("Failed to seek to {} seconds: {}", sec, getFFmpegErrorString(ret));
@@ -160,6 +164,34 @@ void Demuxer::readFromFile()
     } else if (m_audioStream && packet->stream_index == m_audioStream->index) {
         m_audioPacketQueue.push(std::move(packet));
     }
+}
+
+double Demuxer::durationSeconds() const
+{
+    if (!m_fmtCtx) {
+        return 0.0;
+    }
+
+    if (m_fmtCtx->duration != AV_NOPTS_VALUE && m_fmtCtx->duration > 0) {
+        return static_cast<double>(m_fmtCtx->duration) / AV_TIME_BASE;
+    }
+
+    if (m_videoStream && m_videoStream->duration != AV_NOPTS_VALUE && m_videoStream->duration > 0) {
+        return static_cast<double>(m_videoStream->duration) * av_q2d(m_videoStream->time_base);
+    }
+    if (m_audioStream && m_audioStream->duration != AV_NOPTS_VALUE && m_audioStream->duration > 0) {
+        return static_cast<double>(m_audioStream->duration) * av_q2d(m_audioStream->time_base);
+    }
+
+    double maxDur = 0.0;
+    for (unsigned int i = 0; i < m_fmtCtx->nb_streams; ++i) {
+        AVStream* st = m_fmtCtx->streams[i];
+        if (st && st->duration != AV_NOPTS_VALUE && st->duration > 0) {
+            const double d = static_cast<double>(st->duration) * av_q2d(st->time_base);
+            if (d > maxDur) maxDur = d;
+        }
+    }
+    return maxDur;
 }
 
 } // namespace media

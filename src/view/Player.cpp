@@ -70,6 +70,7 @@ void Player::open()
     m_stopThread = false;
     m_playing = false;
     m_firstAudioFrame = true;
+    emit mediaOpened(m_mediaDecoder->durationSeconds());
     if (m_mediaDecoder->hasAudio()) {
         m_audioRenderer->start(m_mediaDecoder->audioSampleRate(), m_mediaDecoder->audioChannelCount());
         m_audioThread = std::thread(&Player::AudioThreadFunc, this);
@@ -156,6 +157,54 @@ void Player::stop()
     m_playCond.notify_all();
 
 }
+void Player::seek(double seconds)
+{
+    NEAPU_FUNC_TRACE;
+    if (!m_mediaDecoder) {
+        NEAPU_LOGE("MediaDecoder is null in seek");
+        return;
+    }
+    if (m_seeking.exchange(true)) {
+        return;
+    }
+
+    bool wasPlaying = isPlaying();
+    {
+        std::unique_lock plk(m_playMutex);
+        m_playing = false;
+    }
+    m_playCond.notify_all();
+
+    for (;;) {
+        bool audioOk = !m_mediaDecoder->hasAudio() || m_audioPaused.load();
+        bool videoOk = !m_mediaDecoder->hasVideo() || m_videoPaused.load();
+        if (audioOk && videoOk) break;
+        if (m_stopThread) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    {
+        std::lock_guard lk(m_audioFrameMutex);
+        m_currentAudioFrame = nullptr;
+    }
+    m_audioFrameCondVar.notify_all();
+
+    m_mediaDecoder->seek(seconds);
+
+    m_startTimePointUS = 0;
+
+    m_audioStopped = false;
+    m_videoStopped = false;
+
+    if (wasPlaying) {
+        {
+            std::unique_lock plk(m_playMutex);
+            m_playing = true;
+        }
+        m_playCond.notify_all();
+    }
+    m_seeking = false;
+}
 media::FramePtr Player::getAudioFrame()
 {
     std::unique_lock lock(m_audioFrameMutex);
@@ -169,11 +218,14 @@ media::FramePtr Player::getAudioFrame()
     // 第一帧需要等待pts并设置起始时间点，后续则不需要
     if (m_firstAudioFrame) {
         m_firstAudioFrame = false;
+        NEAPU_LOGD("First audio frame, pts: {}", frame->ptsUs());
         waitForPts(frame->ptsUs());
     }
     // 根据当前播放的pts校准m_startTimePointUS，这个值会用于计算视频帧的等待时间
     int64_t currentTimestampUS = getCurrentTimestampUS();
     m_startTimePointUS = currentTimestampUS - frame->ptsUs();
+    // NEAPU_LOGD("Got audio frame, pts: {}", frame->ptsUs());
+    emit currentTimeChanged(static_cast<double>(frame->ptsUs()) / 1000000.0);
     return frame;
 }
 void Player::AudioThreadFunc()
@@ -181,8 +233,10 @@ void Player::AudioThreadFunc()
     NEAPU_FUNC_TRACE;
     while (!m_stopThread) {
         if (!isPlaying()) {
+            m_audioPaused = true;
             std::unique_lock<std::shared_mutex> plk(m_playMutex);
             m_playCond.wait(plk, [this]() { return m_stopThread.load() || m_playing; });
+            m_audioPaused = false;
             continue;
         }
 
@@ -230,8 +284,10 @@ void Player::VideoThreadFunc()
     NEAPU_FUNC_TRACE;
     while (!m_stopThread) {
         if (!isPlaying()) {
+            m_videoPaused = true;
             std::unique_lock<std::shared_mutex> plk(m_playMutex);
             m_playCond.wait(plk, [this]() { return m_stopThread.load() || m_playing; });
+            m_videoPaused = false;
             continue;
         }
 
@@ -264,6 +320,10 @@ void Player::VideoThreadFunc()
         waitForPts(nextFrame->ptsUs());
         if (m_stopThread || !isPlaying()) {
             continue;
+        }
+
+        if (!m_mediaDecoder->hasAudio()) {
+            emit currentTimeChanged(static_cast<double>(nextFrame->ptsUs()) / 1000000.0);
         }
 
         // 回调视频帧
