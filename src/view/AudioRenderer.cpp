@@ -6,11 +6,15 @@
 #include <miniaudio.h>
 #include <logger.h>
 #include <cmath>
+#include "../media/Player.h"
 
 namespace view {
-AudioRenderer::AudioRenderer(const AudioFrameCallback& cb, QObject* parent)
+static int64_t getCurrentTimeUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+AudioRenderer::AudioRenderer(QObject* parent)
     : QObject(parent)
-    , m_audioFrameCallback(cb)
 {
 
 }
@@ -66,6 +70,11 @@ void AudioRenderer::stop()
         m_device = nullptr;
     }
 }
+void AudioRenderer::seek(int serial)
+{
+    m_serial = serial;
+    m_startTimeUs = 0;
+}
 void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount)
 {
     const auto channels = static_cast<size_t>(pDevice->playback.channels);
@@ -73,12 +82,17 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
     size_t copyOffset = 0;
     while (copyOffset < requireSize) {
         updateCurrentData();
-        if (!m_currentData) {
+        auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+        // 本次请求的播放时长
+        auto requestDurationUs = static_cast<int64_t>(1e6 * (requireSize - copyOffset) / (channels * sizeof(int16_t) * pDevice->sampleRate));
+        if (!m_currentData ||
+            m_currentData->ptsUs() > expectedPlayTimeUs + requestDurationUs) {
             const size_t remainSize = requireSize - copyOffset;
             std::memset(static_cast<uint8_t*>(pOutput) + copyOffset, 0, remainSize);
             setPlaying(false);
             break;
         }
+
         setPlaying(true);
         size_t frameBytes = static_cast<size_t>(m_currentData->nbSamples()) * channels * sizeof(int16_t);
         if (m_offset > frameBytes) m_offset = frameBytes; // 防御式修正
@@ -95,9 +109,28 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
 }
 void AudioRenderer::updateCurrentData()
 {
-    if (!m_audioFrameCallback) return;
     if (!m_currentData) {
-        m_currentData = m_audioFrameCallback();
+        auto newFrame = media::Player::instance().getAudioFrame();
+        if (newFrame && newFrame->serial() == -1) {
+            emit eof();
+            return;
+        }
+        while (newFrame && m_serial.load() > newFrame->serial()) {
+            // 丢弃旧数据，重新开始计时
+            newFrame = media::Player::instance().getAudioFrame();
+        }
+        if (!newFrame) return;
+        if (m_startTimeUs > 0) {
+            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+            while (newFrame && newFrame->ptsUs() > expectedPlayTimeUs + newFrame->durationUs()) {
+                newFrame = media::Player::instance().getAudioFrame();
+            }
+        }
+        if (!newFrame) return;
+        // 反向校准
+        m_startTimeUs = getCurrentTimeUs() - newFrame->ptsUs();
+        emit playingPts(newFrame->ptsUs());
+        m_currentData = std::move(newFrame);
         m_offset = 0;
     }
 }

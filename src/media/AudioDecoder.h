@@ -19,7 +19,7 @@ public:
     int channelCount() const;
 
 protected:
-    FramePtr postProcess(AVFrame* avFrame) override;
+    FramePtr postProcess(FramePtr&& frame) override;
 
 protected:
     SwrContext* m_swrCtx{nullptr};

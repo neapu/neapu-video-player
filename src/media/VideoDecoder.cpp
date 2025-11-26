@@ -28,7 +28,7 @@ static AVHWDeviceType hwAccelTypeFromEnum(VideoDecoder::HWAccelMethod method)
 }
 #ifdef _WIN32
 VideoDecoder::VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod, ID3D11Device* d3d11Device)
-    : DecoderBase(stream, packetCallback)
+    : DecoderBase(stream, packetCallback, CodecType::Video)
     , m_hwaccelMethod(hwaccelMethod)
     , m_d3d11Device(d3d11Device)
 #else
@@ -139,23 +139,23 @@ void VideoDecoder::initializeHWContext()
         return AV_PIX_FMT_NONE;
     };
 }
-AVFrame* VideoDecoder::convertFixelFormat(AVFrame* avFrame)
+FramePtr VideoDecoder::convertFixelFormat(FramePtr&& avFrame)
 {
     if (m_swsCtx &&
-        (m_swsCtx->src_format != avFrame->format ||
-         m_swsCtx->src_w != avFrame->width ||
-         m_swsCtx->src_h != avFrame->height)) {
+        (m_swsCtx->src_format != avFrame->avFrame()->format ||
+         m_swsCtx->src_w != avFrame->width() ||
+         m_swsCtx->src_h != avFrame->height())) {
         sws_freeContext(m_swsCtx);
         m_swsCtx = nullptr;
     }
 
     if (!m_swsCtx) {
         m_swsCtx = sws_getContext(
-            avFrame->width,
-            avFrame->height,
-            static_cast<AVPixelFormat>(avFrame->format),
-            avFrame->width,
-            avFrame->height,
+            avFrame->width(),
+            avFrame->height(),
+            static_cast<AVPixelFormat>(avFrame->avFrame()->format),
+            avFrame->width(),
+            avFrame->height(),
             AV_PIX_FMT_YUV420P,
             SWS_BILINEAR,
             nullptr,
@@ -167,96 +167,72 @@ AVFrame* VideoDecoder::convertFixelFormat(AVFrame* avFrame)
         }
     }
 
-    AVFrame* retFrame = av_frame_alloc();
-    if (!retFrame) {
-        NEAPU_LOGE("Failed to allocate frame for pixel format conversion");
-        return nullptr;
-    }
-    retFrame->format = AV_PIX_FMT_YUV420P;
-    retFrame->width = avFrame->width;
-    retFrame->height = avFrame->height;
-    int ret = av_frame_get_buffer(retFrame, 32);
+    auto retFrame = std::make_unique<Frame>(avFrame->serial());
+    retFrame->avFrame()->format = AV_PIX_FMT_YUV420P;
+    retFrame->avFrame()->width = avFrame->width();
+    retFrame->avFrame()->height = avFrame->height();
+    int ret = av_frame_get_buffer(retFrame->avFrame(), 32);
     if (ret < 0) {
         std::string errStr = getFFmpegErrorString(ret);
         NEAPU_LOGE("Failed to allocate buffer for converted frame: {}", errStr);
-        av_frame_free(&retFrame);
         return nullptr;
     }
     ret = sws_scale(
         m_swsCtx,
-        avFrame->data,
-        avFrame->linesize,
+        avFrame->avFrame()->data,
+        avFrame->avFrame()->linesize,
         0,
-        avFrame->height,
-        retFrame->data,
-        retFrame->linesize);
+        avFrame->avFrame()->height,
+        retFrame->avFrame()->data,
+        retFrame->avFrame()->linesize);
     if (ret < 0) {
         std::string errStr = getFFmpegErrorString(ret);
         NEAPU_LOGE("Failed to scale frame for pixel format conversion: {}", errStr);
-        av_frame_free(&retFrame);
         return nullptr;
     }
 
-    retFrame->pts = avFrame->pts;
-    retFrame->pkt_dts = avFrame->pkt_dts;
-    retFrame->duration = avFrame->duration;
-    retFrame->color_primaries = avFrame->color_primaries;
-    retFrame->color_trc = avFrame->color_trc;
-    retFrame->colorspace = avFrame->colorspace;
-    retFrame->color_range = avFrame->color_range;
-    av_frame_free(&avFrame);
+    retFrame->copyMetaDataFrom(*avFrame);
     return retFrame;
 }
-AVFrame* VideoDecoder::hwFrameTransfer(AVFrame* avFrame)
+FramePtr VideoDecoder::hwFrameTransfer(FramePtr&& avFrame)
 {
-    AVFrame* swFrame = av_frame_alloc();
-    if (!swFrame) {
-        NEAPU_LOGE("Failed to allocate software frame for downloading hardware frame");
-        return nullptr;
-    }
-    int ret = av_hwframe_transfer_data(swFrame, avFrame, 0);
+    auto swFrame = std::make_unique<Frame>(avFrame->serial());
+    int ret = av_hwframe_transfer_data(swFrame->avFrame(), avFrame->avFrame(), 0);
     if (ret < 0) {
         std::string errStr = getFFmpegErrorString(ret);
         NEAPU_LOGE("Failed to transfer hardware frame to software frame: {}", errStr);
-        av_frame_free(&swFrame);
         return nullptr;
     }
 
-    swFrame->pts = avFrame->pts;
-    swFrame->pkt_dts = avFrame->pkt_dts;
-    swFrame->duration = avFrame->duration;
-    swFrame->color_primaries = avFrame->color_primaries;
-    swFrame->color_trc = avFrame->color_trc;
-    swFrame->colorspace = avFrame->colorspace;
-    swFrame->color_range = avFrame->color_range;
-    swFrame->time_base = m_stream->time_base;
-    av_frame_free(&avFrame);
+    swFrame->copyMetaDataFrom(*avFrame);
     return swFrame;
 }
-FramePtr VideoDecoder::postProcess(AVFrame* avFrame)
+FramePtr VideoDecoder::postProcess(FramePtr&& avFrame)
 {
-    if (avFrame->format == AV_PIX_FMT_D3D11) {
-        avFrame->time_base = m_stream->time_base;
-        return std::make_unique<Frame>(avFrame);
+    if (avFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
+        return avFrame;
     }
 
-    AVFrame* processedFrame = avFrame;
-    if (processedFrame->hw_frames_ctx) {
-        processedFrame = hwFrameTransfer(avFrame);
-        if (!processedFrame) {
+    FramePtr swFrame;
+    if (avFrame->avFrame()->hw_frames_ctx) {
+        swFrame = hwFrameTransfer(std::move(avFrame));
+        if (!swFrame) {
             return nullptr;
         }
+    } else {
+        swFrame = std::move(avFrame);
     }
 
-    if (processedFrame->format != AV_PIX_FMT_YUV420P) {
-        AVFrame* convertedFrame = convertFixelFormat(processedFrame);
+    FramePtr convertedFrame;
+    if (swFrame->avFrame()->format != AV_PIX_FMT_YUV420P) {
+        convertedFrame = convertFixelFormat(std::move(swFrame));
         if (!convertedFrame) {
             return nullptr;
         }
-        processedFrame = convertedFrame;
+    } else {
+        convertedFrame = std::move(swFrame);
     }
 
-    processedFrame->time_base = m_stream->time_base;
-    return std::make_unique<Frame>(processedFrame);
+    return convertedFrame;
 }
 } // namespace media

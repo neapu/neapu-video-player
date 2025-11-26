@@ -11,8 +11,8 @@ qt_add_library(${LIB_NAME} STATIC
         ControlWidget.h
         VideoRenderer.cpp
         VideoRenderer.h
-        Player.cpp
-        Player.h
+        PlayerControllor.cpp
+        PlayerController.h
 )
 
 target_link_libraries(${LIB_NAME} PUBLIC Qt6::Gui Qt6::Widgets Qt6::GuiPrivate)

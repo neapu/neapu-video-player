@@ -11,13 +11,6 @@ std::string getFFmpegErrorString(int errNum)
     av_strerror(errNum, errBuf, sizeof(errBuf));
     return std::string(errBuf);
 }
-
-void AVPacketDeleter::operator()(AVPacket* pkt) const
-{
-    if (pkt) {
-        av_packet_free(&pkt);
-    }
-}
 std::string getAVCodecIDString(int codecId)
 {
     // TODO: implement codec name retrieval

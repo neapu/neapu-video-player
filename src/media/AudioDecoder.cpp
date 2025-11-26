@@ -13,7 +13,7 @@ extern "C"{
 
 namespace media {
 AudioDecoder::AudioDecoder(AVStream* stream, const AVPacketCallback& packetCallback)
-    : DecoderBase(stream, packetCallback)
+    : DecoderBase(stream, packetCallback, CodecType::Audio)
 {
     NEAPU_FUNC_TRACE;
     if (!m_stream) {
@@ -55,24 +55,19 @@ int AudioDecoder::channelCount() const
     }
     return m_stream->codecpar->ch_layout.nb_channels;
 }
-FramePtr AudioDecoder::postProcess(AVFrame* avFrame)
+FramePtr AudioDecoder::postProcess(FramePtr&& frame)
 {
-    if (!avFrame) {
+    if (!frame) {
         return nullptr;
     }
 
+    auto* avFrame = frame->avFrame();
     if (avFrame->format == AV_SAMPLE_FMT_S16) {
-        avFrame->time_base = m_stream->time_base;
-        return std::make_unique<Frame>(avFrame);
+        return frame;
     }
 
     // 格式转换为 AV_SAMPLE_FMT_S16，采样率和通道数保持不变
-    AVFrame* convertedFrame = av_frame_alloc();
-    if (!convertedFrame) {
-        NEAPU_LOGE("Failed to allocate converted audio frame");
-        av_frame_free(&avFrame);
-        return nullptr;
-    }
+    auto convertedFrame = std::make_unique<Frame>(frame->serial());
 
     bool needReinit = false;
     if (!m_swrCtx) needReinit = true;
@@ -95,16 +90,12 @@ FramePtr AudioDecoder::postProcess(AVFrame* avFrame)
         int ret = av_channel_layout_copy(&inLayout, &avFrame->ch_layout);
         if (ret < 0) {
             NEAPU_LOGE("Failed to copy input channel layout: {}", getFFmpegErrorString(ret));
-            av_frame_free(&convertedFrame);
-            av_frame_free(&avFrame);
             return nullptr;
         }
         ret = av_channel_layout_copy(&outLayout, &avFrame->ch_layout);
         if (ret < 0) {
             NEAPU_LOGE("Failed to copy output channel layout: {}", getFFmpegErrorString(ret));
             av_channel_layout_uninit(&inLayout);
-            av_frame_free(&convertedFrame);
-            av_frame_free(&avFrame);
             return nullptr;
         }
 
@@ -116,8 +107,6 @@ FramePtr AudioDecoder::postProcess(AVFrame* avFrame)
             NEAPU_LOGE("Failed to alloc swr context: {}", getFFmpegErrorString(ret));
             av_channel_layout_uninit(&inLayout);
             av_channel_layout_uninit(&outLayout);
-            av_frame_free(&convertedFrame);
-            av_frame_free(&avFrame);
             return nullptr;
         }
         ret = swr_init(m_swrCtx);
@@ -126,8 +115,6 @@ FramePtr AudioDecoder::postProcess(AVFrame* avFrame)
         if (ret < 0) {
             NEAPU_LOGE("Failed to init swr context: {}", getFFmpegErrorString(ret));
             swr_free(&m_swrCtx);
-            av_frame_free(&convertedFrame);
-            av_frame_free(&avFrame);
             return nullptr;
         }
 
@@ -143,34 +130,24 @@ FramePtr AudioDecoder::postProcess(AVFrame* avFrame)
             NEAPU_LOGE("Failed to cache channel layout");
             delete m_lastChLayout;
             m_lastChLayout = nullptr;
-            av_frame_free(&convertedFrame);
-            av_frame_free(&avFrame);
             return nullptr;
         }
     }
 
-    convertedFrame->format = AV_SAMPLE_FMT_S16;
-    convertedFrame->sample_rate = avFrame->sample_rate;
-    if (av_channel_layout_copy(&convertedFrame->ch_layout, &avFrame->ch_layout) < 0) {
+    convertedFrame->avFrame()->format = AV_SAMPLE_FMT_S16;
+    convertedFrame->avFrame()->sample_rate = avFrame->sample_rate;
+    if (av_channel_layout_copy(&convertedFrame->avFrame()->ch_layout, &avFrame->ch_layout) < 0) {
         NEAPU_LOGE("Failed to set output channel layout");
-        av_frame_free(&convertedFrame);
-        av_frame_free(&avFrame);
         return nullptr;
     }
 
-    int ret = swr_convert_frame(m_swrCtx, convertedFrame, avFrame);
+    int ret = swr_convert_frame(m_swrCtx, convertedFrame->avFrame(), avFrame);
     if (ret < 0) {
         NEAPU_LOGE("Failed to convert audio frame: {}", getFFmpegErrorString(ret));
-        av_frame_free(&convertedFrame);
-        av_frame_free(&avFrame);
         return nullptr;
     }
 
-    convertedFrame->pts = avFrame->pts;
-    convertedFrame->pkt_dts = avFrame->pkt_dts;
-    convertedFrame->duration = avFrame->duration;
-    convertedFrame->time_base = m_stream->time_base;
-    av_frame_free(&avFrame);
-    return std::make_unique<Frame>(convertedFrame);
+    convertedFrame->copyMetaDataFrom(*frame);
+    return convertedFrame;
 }
 } // namespace media

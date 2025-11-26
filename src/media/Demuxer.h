@@ -5,9 +5,8 @@
 #pragma once
 #include <string>
 #include "Helper.h"
-#include <queue>
-#include <mutex>
 #include <atomic>
+#include "Queue.h"
 
 typedef struct AVFormatContext AVFormatContext;
 typedef struct AVStream AVStream;
@@ -32,27 +31,34 @@ public:
     int videoStreamIndex() const;
     int audioStreamIndex() const;
 
-    AVPacketPtr getVideoPacket();
-    AVPacketPtr getAudioPacket();
+    PacketPtr getVideoPacket();
+    PacketPtr getAudioPacket();
 
     bool isEof() const { return m_isEof.load(); }
 
-    void seek(double seconds);
+    void seek(double seconds, int serial);
 
     double durationSeconds() const;
 
 private:
-    void readFromFile();
+    void readThreadFunc();
 
 private:
     AVFormatContext* m_fmtCtx{nullptr};
     AVStream* m_videoStream{nullptr};
     AVStream* m_audioStream{nullptr};
+    PacketQueue m_videoQueue{50 * 1024 * 1024}; // 50 MB
+    PacketQueue m_audioQueue{10 * 1024 * 1024}; // 10 MB
+    std::thread m_readThread;
 
-    std::queue<AVPacketPtr> m_videoPacketQueue;
-    std::queue<AVPacketPtr> m_audioPacketQueue;
-    std::mutex m_mutex;
     std::atomic_bool m_isEof{false};
+
+    std::atomic<double> m_seekTarget{0.0};
+    std::atomic_bool m_seekRequested{false};
+
+    std::atomic_bool m_running{true};
+
+    std::atomic_int m_serial{0};
 };
 
 } // namespace media

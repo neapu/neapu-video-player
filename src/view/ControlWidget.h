@@ -9,20 +9,20 @@
 #include <QPushButton>
 #include <QBoxLayout>
 #include <QRecursiveMutex>
-#include "Player.h"
+#include "PlayerController.h"
 
 namespace view {
 
 class ControlWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit ControlWidget(Player* player, QWidget* parent = nullptr);
+    explicit ControlWidget(PlayerController* playerController, QWidget* parent = nullptr);
     ~ControlWidget() override;
 
     // void setDuration(int64_t durationUs);
     // void setCurrentPts(int64_t currentPtsUs);
 
-private slots:
+public slots:
     void onDurationChanged(double durationSeconds);
     void onPlayingTimeChanged(double seconds);
 
@@ -37,6 +37,8 @@ private:
     void onVolumeSliderMoved(int value);
 
 private:
+    PlayerController* m_playerController{nullptr};
+
     QLabel* m_currentTimeLabel{nullptr};
     QLabel* m_totalTimeLabel{nullptr};
     QSlider* m_timelineSlider{nullptr};
@@ -58,8 +60,6 @@ private:
 
     QRecursiveMutex m_mutex;
     bool m_timelineSliderDragging{false};
-
-    Player* m_player{nullptr};
 };
 
 } // namespace view

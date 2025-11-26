@@ -48,14 +48,16 @@ Demuxer::Demuxer(const std::string& url)
     }
 
     m_isEof.store(false);
+
+    m_readThread = std::thread(&Demuxer::readThreadFunc, this);
 }
 Demuxer::Demuxer(Demuxer&& other) noexcept
 {
     m_fmtCtx = other.m_fmtCtx;
     m_videoStream = other.m_videoStream;
     m_audioStream = other.m_audioStream;
-    m_videoPacketQueue = std::move(other.m_videoPacketQueue);
-    m_audioPacketQueue = std::move(other.m_audioPacketQueue);
+    m_videoQueue = std::move(other.m_videoQueue);
+    m_audioQueue = std::move(other.m_audioQueue);
     m_isEof.store(other.m_isEof.load());
 
     other.m_fmtCtx = nullptr;
@@ -72,8 +74,8 @@ Demuxer& Demuxer::operator=(Demuxer&& other) noexcept
         m_fmtCtx = other.m_fmtCtx;
         m_videoStream = other.m_videoStream;
         m_audioStream = other.m_audioStream;
-        m_videoPacketQueue = std::move(other.m_videoPacketQueue);
-        m_audioPacketQueue = std::move(other.m_audioPacketQueue);
+        m_videoQueue = std::move(other.m_videoQueue);
+        m_audioQueue = std::move(other.m_audioQueue);
         m_isEof.store(other.m_isEof.load());
 
         other.m_fmtCtx = nullptr;
@@ -84,6 +86,12 @@ Demuxer& Demuxer::operator=(Demuxer&& other) noexcept
 }
 Demuxer::~Demuxer()
 {
+    m_running = false;
+    m_audioQueue.clear();
+    m_videoQueue.clear();
+    if (m_readThread.joinable()) {
+        m_readThread.join();
+    }
     if (m_fmtCtx) {
         avformat_close_input(&m_fmtCtx);
         m_fmtCtx = nullptr;
@@ -103,66 +111,35 @@ int Demuxer::audioStreamIndex() const
     }
     return m_audioStream->index;
 }
-AVPacketPtr Demuxer::getVideoPacket()
+PacketPtr Demuxer::getVideoPacket()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    while (m_videoPacketQueue.empty() && !m_isEof.load()) {
-        readFromFile();
-    }
-    if (m_videoPacketQueue.empty()) {
+    if (!m_videoStream) {
         return nullptr;
     }
-    auto pkt = std::move(m_videoPacketQueue.front());
-    m_videoPacketQueue.pop();
-    return pkt;
+    return m_videoQueue.pop();
 }
-AVPacketPtr Demuxer::getAudioPacket()
+PacketPtr Demuxer::getAudioPacket()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    while (m_audioPacketQueue.empty() && !m_isEof.load()) {
-        readFromFile();
-    }
-    if (m_audioPacketQueue.empty()) {
+    if (!m_audioStream) {
         return nullptr;
     }
-    auto pkt = std::move(m_audioPacketQueue.front());
-    m_audioPacketQueue.pop();
-    return pkt;
+    return m_audioQueue.pop();
 }
-void Demuxer::seek(double seconds)
+void Demuxer::seek(double seconds, int serial)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    double sec = seconds;
-    if (sec < 0.0) sec = 0.0;
-    const int64_t timestamp = static_cast<int64_t>(sec * AV_TIME_BASE);
-    int ret = av_seek_frame(m_fmtCtx, -1, timestamp, AVSEEK_FLAG_BACKWARD);
-    if (ret < 0) {
-        NEAPU_LOGE("Failed to seek to {} seconds: {}", sec, getFFmpegErrorString(ret));
-        return;
-    }
-    while (!m_videoPacketQueue.empty()) {
-        m_videoPacketQueue.pop();
-    }
-    while (!m_audioPacketQueue.empty()) {
-        m_audioPacketQueue.pop();
-    }
-    m_isEof.store(false);
-}
-void Demuxer::readFromFile()
-{
-    AVPacketPtr packet{av_packet_alloc()};
-    const int ret = av_read_frame(m_fmtCtx, packet.get());
-    if (ret < 0) {
-        if (ret != AVERROR_EOF) {
-            NEAPU_LOGE("Error reading frame: {}", getFFmpegErrorString(ret));
+    m_seekTarget = seconds;
+    m_serial = serial;
+    m_seekRequested = true;
+    m_videoQueue.clear();
+    m_audioQueue.clear();
+    if (m_isEof) {
+        m_running = false;
+        if (m_readThread.joinable()) {
+            m_readThread.join();
         }
-        m_isEof.store(true);
-        return;
-    }
-    if (m_videoStream && packet->stream_index == m_videoStream->index) {
-        m_videoPacketQueue.push(std::move(packet));
-    } else if (m_audioStream && packet->stream_index == m_audioStream->index) {
-        m_audioPacketQueue.push(std::move(packet));
+        m_isEof = false;
+        m_running = true;
+        m_readThread = std::thread(&Demuxer::readThreadFunc, this);
     }
 }
 
@@ -192,6 +169,58 @@ double Demuxer::durationSeconds() const
         }
     }
     return maxDur;
+}
+void Demuxer::readThreadFunc()
+{
+    while (m_running) {
+        if (m_seekRequested) {
+            double sec = m_seekTarget;
+            if (sec < 0.0) sec = 0.0;
+            const int64_t timestamp = static_cast<int64_t>(sec * AV_TIME_BASE);
+            int ret = av_seek_frame(m_fmtCtx, -1, timestamp, AVSEEK_FLAG_BACKWARD);
+            if (ret < 0) {
+                NEAPU_LOGE("Failed to seek to {} seconds: {}", sec, getFFmpegErrorString(ret));
+                m_isEof = true;
+                break;
+            }
+            if (m_videoStream) {
+                m_videoQueue.clear();
+                m_videoQueue.push(std::make_unique<Packet>(Packet::PacketType::Flush, m_serial.load()));
+            }
+            if (m_audioStream) {
+                m_audioQueue.clear();
+                m_audioQueue.push(std::make_unique<Packet>(Packet::PacketType::Flush, m_serial.load()));
+            }
+            m_isEof = false;
+            m_seekRequested = false;
+        }
+
+        auto packet = std::make_unique<Packet>(Packet::PacketType::Video, m_serial.load());
+        int ret = av_read_frame(m_fmtCtx, packet->avPacket());
+        if (ret < 0) {
+            if (ret == AVERROR_EOF) {
+                NEAPU_LOGI("Reached end of file");
+                m_isEof.store(true);
+                if (m_videoStream) {
+                    m_videoQueue.push(std::make_unique<Packet>(Packet::PacketType::Eof, -1));
+                }
+                if (m_audioStream) {
+                    m_audioQueue.push(std::make_unique<Packet>(Packet::PacketType::Eof, -1));
+                }
+                break;
+            } else {
+                NEAPU_LOGE("Error reading frame: {}", getFFmpegErrorString(ret));
+                continue;
+            }
+        }
+        if (m_videoStream && packet->avPacket()->stream_index == m_videoStream->index) {
+            packet->setType(Packet::PacketType::Video);
+            m_videoQueue.push(std::move(packet));
+        } else if (m_audioStream && packet->avPacket()->stream_index == m_audioStream->index) {
+            packet->setType(Packet::PacketType::Audio);
+            m_audioQueue.push(std::move(packet));
+        }
+    }
 }
 
 } // namespace media

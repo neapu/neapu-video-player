@@ -31,9 +31,9 @@ public:
 
 protected:
     virtual void initializeHWContext();
-    virtual AVFrame* convertFixelFormat(AVFrame* avFrame);
-    virtual AVFrame* hwFrameTransfer(AVFrame* avFrame);
-    FramePtr postProcess(AVFrame* avFrame) override;
+    virtual FramePtr convertFixelFormat(FramePtr&& avFrame);
+    virtual FramePtr hwFrameTransfer(FramePtr&& avFrame);
+    FramePtr postProcess(FramePtr&& frame) override;
 
 protected:
     HWAccelMethod m_hwaccelMethod{HWAccelMethod::None};

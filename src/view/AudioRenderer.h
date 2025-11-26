@@ -10,18 +10,21 @@
 typedef struct ma_device ma_device;
 
 namespace view {
-using AudioFrameCallback = std::function<media::FramePtr()>;
 class AudioRenderer:public QObject {
     Q_OBJECT
 public:
-    explicit AudioRenderer(const AudioFrameCallback& cb, QObject* parent = nullptr);
+    explicit AudioRenderer(QObject* parent = nullptr);
     ~AudioRenderer() override = default;
 
     bool start(int sampleRate, int channels);
     void stop();
 
+    void seek(int serial);
+
 signals:
     void playingStateChanged(bool playing);
+    void playingPts(int64_t);
+    void eof();
 
 private:
     void maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount);
@@ -29,14 +32,15 @@ private:
     void setPlaying(bool playing);
 
 private:
-    AudioFrameCallback m_audioFrameCallback;
-
     std::atomic_bool m_playing{false};
 
     ma_device* m_device{nullptr};
 
     media::FramePtr m_currentData{nullptr};
     size_t m_offset{0};
+
+    std::atomic<int64_t> m_startTimeUs{0};
+    std::atomic_int m_serial{0};
 };
 
 } // namespace view

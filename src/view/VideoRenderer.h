@@ -25,14 +25,24 @@ public:
     void initialize(QRhiCommandBuffer* cb) override;
     void render(QRhiCommandBuffer* cb) override;
 
-    void onFrameReady(media::FramePtr&& newFrame);
+    void start(double fps);
+    void stop();
+
+    void seek(int serial);
+
+    // void onFrameReady(media::FramePtr&& newFrame);
 
 #ifdef _WIN32
     ID3D11Device* getD3D11Device();
 #endif
 
+public slots:
+    void onAudioPtsUpdated(int64_t ptsUs);
+
 signals:
     void initialized();
+    void eof();
+    void playingPts(int64_t ptsUs);
 
 private:
     bool recreatePipeline();
@@ -63,10 +73,14 @@ private:
 
     media::FramePtr m_currentFrame{};
     media::FramePtr m_nextFrame{};
-    std::mutex m_frameMutex;
 
     QSize m_lastVideoSize{0, 0};
     QSize m_lastRenderSize{0, 0};
+
+    std::atomic_bool m_running{false};
+    std::atomic<double> m_fps{30.0};
+    std::atomic<int64_t> m_startTimeUs{0};
+    std::atomic_int m_serial{0};
 
 #ifdef _WIN32
     ID3D11Device* m_d3d11Device{nullptr};

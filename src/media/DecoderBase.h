@@ -5,6 +5,9 @@
 #pragma once
 #include "Frame.h"
 #include "Helper.h"
+#include "Packet.h"
+#include "Queue.h"
+
 #include <functional>
 #include <queue>
 #include <memory>
@@ -24,32 +27,35 @@ public:
         Audio,
         Video,
     };
-    using AVPacketCallback = std::function<AVPacketPtr()>;
+    using AVPacketCallback = std::function<PacketPtr()>;
 
-    DecoderBase(AVStream* stream, const AVPacketCallback& packetCallback);
+    DecoderBase(AVStream* stream, const AVPacketCallback& packetCallback, CodecType type);
     virtual ~DecoderBase();
 
-    enum class DecodeError {
-        None,
-        Other,
-        Eof,
-    };
-    auto getFrame() -> std::expected<FramePtr, DecodeError>;
-    void flush();
+    void start();
+    void stop();
+
+    bool testDecode();
+
+    FramePtr getFrame();
 
 protected:
     virtual void initializeContext();
-    virtual FramePtr postProcess(AVFrame* avFrame) = 0;
-    virtual DecodeError decode();
+    virtual FramePtr postProcess(FramePtr&& frame) = 0;
+    virtual void decodeThreadFunc();
 
 protected:
+    CodecType m_type;
     AVStream* m_stream{nullptr};
     AVCodecContext* m_codecCtx{nullptr};
     const AVCodec* m_codec{nullptr};
 
-    std::queue<FramePtr> m_frameQueue;
-    std::mutex m_mutex;
+    FrameQueue m_frameQueue;
     AVPacketCallback m_packetCallback;
+    int m_serial{0};
+
+    std::thread m_decodeThread;
+    std::atomic_bool m_running{false};
 };
 
 } // namespace media

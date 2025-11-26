@@ -20,27 +20,14 @@ MainWindow::MainWindow()
     setMinimumSize(800, 600);
 
     m_settings = new QSettings("NeapuVideoPlayer.ini", QSettings::IniFormat, this);
-    m_player = new Player(this);
-    m_audioRenderer = new AudioRenderer([this]() {
-        return m_player->getAudioFrame();
-    }, this);
-
 
     createMenus();
 
     createLayout();
-
-    m_player->setVideoRenderer(m_videoRenderer);
-    m_player->setAudioRenderer(m_audioRenderer);
-
-    connect(m_videoRenderer, &VideoRenderer::initialized, [this]() {
-        m_player->setD3D11Device(m_videoRenderer->getD3D11Device());
-    });
 }
 MainWindow::~MainWindow()
 {
     NEAPU_FUNC_TRACE;
-    m_player->close();
 }
 void MainWindow::createMenus()
 {
@@ -49,8 +36,7 @@ void MainWindow::createMenus()
     auto* exitAction = fineManu->addAction(tr("E&xit"));
 
     connect(openAction, &QAction::triggered, [this]() {
-        m_player->open();
-        m_player->play();
+        m_playerController->onOpen();
     });
     connect(exitAction, &QAction::triggered, [this]() { close(); });
 }
@@ -61,8 +47,9 @@ void MainWindow::createLayout()
 
     auto* layout = new QVBoxLayout(centralWidget);
     m_videoRenderer = new VideoRenderer(centralWidget);
+    m_playerController = new PlayerController(m_videoRenderer, this);
     layout->addWidget(m_videoRenderer, 1);
-    m_controlWidget = new ControlWidget(m_player, centralWidget);
+    m_controlWidget = new ControlWidget(m_playerController, centralWidget);
     m_controlWidget->setFixedHeight(80);
     layout->addWidget(m_controlWidget, 0);
     layout->setContentsMargins(0, 0, 0, 0);

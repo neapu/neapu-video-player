@@ -3,7 +3,8 @@
 //
 
 #include "Frame.h"
-#include <algorithm>
+// #include <algorithm>
+#include <stdexcept>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -18,20 +19,19 @@ extern "C" {
 
 namespace media {
 
-namespace {
-static inline AVFrame* toAv(void* p) { return reinterpret_cast<AVFrame*>(p); }
-}
-
-Frame::Frame(void* avFrame)
-    : m_avFrame(avFrame)
+Frame::Frame(int serial)
+    : m_serial(serial)
 {
+    m_avFrame = av_frame_alloc();
+    if (!m_avFrame) {
+        throw std::runtime_error("Failed to allocate AVFrame");
+    }
 }
 
 Frame::~Frame()
 {
     if (m_avFrame) {
-        AVFrame* f = toAv(m_avFrame);
-        av_frame_free(&f);
+        av_frame_free(&m_avFrame);
         m_avFrame = nullptr;
     }
 }
@@ -46,8 +46,7 @@ Frame& Frame::operator=(Frame&& other) noexcept
 {
     if (this != &other) {
         if (m_avFrame) {
-            AVFrame* f = toAv(m_avFrame);
-            av_frame_free(&f);
+            av_frame_free(&m_avFrame);
         }
         m_avFrame = other.m_avFrame;
         other.m_avFrame = nullptr;
@@ -55,41 +54,48 @@ Frame& Frame::operator=(Frame&& other) noexcept
     return *this;
 }
 
+void Frame::copyMetaDataFrom(const Frame& other)
+{
+    if (!m_avFrame || !other.m_avFrame) return;
+    m_avFrame->pts = other.m_avFrame->pts;
+    m_avFrame->pkt_dts = other.m_avFrame->pkt_dts;
+    m_avFrame->duration = other.m_avFrame->duration;
+    m_avFrame->time_base = other.m_avFrame->time_base;
+    m_avFrame->color_primaries = other.m_avFrame->color_primaries;
+    m_avFrame->color_trc = other.m_avFrame->color_trc;
+    m_avFrame->colorspace = other.m_avFrame->colorspace;
+    m_avFrame->color_range = other.m_avFrame->color_range;
+}
 const uint8_t* Frame::data(int index) const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f || index < 0 || index >= AV_NUM_DATA_POINTERS) return nullptr;
-    return f->data[index];
+    if (!m_avFrame || index < 0 || index >= AV_NUM_DATA_POINTERS) return nullptr;
+    return m_avFrame->data[index];
 }
 
 int Frame::lineSize(int index) const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f || index < 0 || index >= AV_NUM_DATA_POINTERS) return 0;
-    return f->linesize[index];
+    if (!m_avFrame || index < 0 || index >= AV_NUM_DATA_POINTERS) return 0;
+    return m_avFrame->linesize[index];
 }
 
 int Frame::width() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->width : 0;
+    return m_avFrame ? m_avFrame->width : 0;
 }
 
 int Frame::height() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->height : 0;
+    return m_avFrame ? m_avFrame->height : 0;
 }
 
 int64_t Frame::ptsUs() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return 0;
+    if (!m_avFrame) return 0;
     int64_t ts = 0;
-    if (f->pts != AV_NOPTS_VALUE) ts = f->pts;
-    else if (f->best_effort_timestamp != AV_NOPTS_VALUE) ts = f->best_effort_timestamp;
+    if (m_avFrame->pts != AV_NOPTS_VALUE) ts = m_avFrame->pts;
+    else if (m_avFrame->best_effort_timestamp != AV_NOPTS_VALUE) ts = m_avFrame->best_effort_timestamp;
     else return 0;
-    AVRational tb = f->time_base;
+    AVRational tb = m_avFrame->time_base;
     if (tb.num > 0 && tb.den > 0) {
         return av_rescale_q(ts, tb, AVRational{1, 1000000});
     }
@@ -98,11 +104,10 @@ int64_t Frame::ptsUs() const
 
 int64_t Frame::durationUs() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return 0;
-    int64_t dur = f->duration;
+    if (!m_avFrame) return 0;
+    int64_t dur = m_avFrame->duration;
     if (dur <= 0) return 0;
-    AVRational tb = f->time_base;
+    AVRational tb = m_avFrame->time_base;
     if (tb.num > 0 && tb.den > 0) {
         return av_rescale_q(dur, tb, AVRational{1, 1000000});
     }
@@ -111,9 +116,8 @@ int64_t Frame::durationUs() const
 
 Frame::PixelFormat Frame::pixelFormat() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return PixelFormat::UNKNOWN;
-    switch (static_cast<AVPixelFormat>(f->format)) {
+    if (!m_avFrame) return PixelFormat::UNKNOWN;
+    switch (static_cast<AVPixelFormat>(m_avFrame->format)) {
         case AV_PIX_FMT_YUV420P: return PixelFormat::YUV420P;
 #ifdef _WIN32
         case AV_PIX_FMT_D3D11: return PixelFormat::D3D11Texture2D;
@@ -124,9 +128,8 @@ Frame::PixelFormat Frame::pixelFormat() const
 
 Frame::ColorSpace Frame::colorSpace() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return ColorSpace::BT601;
-    switch (f->colorspace) {
+    if (!m_avFrame) return ColorSpace::BT601;
+    switch (m_avFrame->colorspace) {
         case AVCOL_SPC_BT709: return ColorSpace::BT709;
         default: return ColorSpace::BT601;
     }
@@ -134,9 +137,8 @@ Frame::ColorSpace Frame::colorSpace() const
 
 Frame::ColorRange Frame::colorRange() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return ColorRange::Limited;
-    switch (f->color_range) {
+    if (!m_avFrame) return ColorRange::Limited;
+    switch (m_avFrame->color_range) {
         case AVCOL_RANGE_JPEG: return ColorRange::Full;
         default: return ColorRange::Limited;
     }
@@ -144,20 +146,17 @@ Frame::ColorRange Frame::colorRange() const
 
 uint8_t* Frame::yData() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->data[0] : nullptr;
+    return m_avFrame ? m_avFrame->data[0] : nullptr;
 }
 
 uint8_t* Frame::uData() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->data[1] : nullptr;
+    return m_avFrame ? m_avFrame->data[1] : nullptr;
 }
 
 uint8_t* Frame::vData() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->data[2] : nullptr;
+    return m_avFrame ? m_avFrame->data[2] : nullptr;
 }
 
 int Frame::yLineSize() const
@@ -178,41 +177,40 @@ int Frame::vLineSize() const
 #ifdef _WIN32
 ID3D11Texture2D* Frame::d3d11Texture2D() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return nullptr;
-    if (static_cast<AVPixelFormat>(f->format) != AV_PIX_FMT_D3D11) return nullptr;
-    return reinterpret_cast<ID3D11Texture2D*>(f->data[0]);
+    if (!m_avFrame) return nullptr;
+    if (static_cast<AVPixelFormat>(m_avFrame->format) != AV_PIX_FMT_D3D11) return nullptr;
+    return reinterpret_cast<ID3D11Texture2D*>(m_avFrame->data[0]);
 }
 
 int Frame::subresourceIndex() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return 0;
-    if (static_cast<AVPixelFormat>(f->format) != AV_PIX_FMT_D3D11) return 0;
-    return static_cast<int>(reinterpret_cast<uintptr_t>(f->data[1]));
+    if (!m_avFrame) return 0;
+    if (static_cast<AVPixelFormat>(m_avFrame->format) != AV_PIX_FMT_D3D11) return 0;
+    return static_cast<int>(reinterpret_cast<uintptr_t>(m_avFrame->data[1]));
 }
 #endif
 
 int Frame::sampleRate() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->sample_rate : 0;
+    return m_avFrame ? m_avFrame->sample_rate : 0;
 }
 
 int Frame::channels() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    if (!f) return 0;
+    if (!m_avFrame) return 0;
 #if LIBAVUTIL_VERSION_MAJOR >= 57
-    return f->ch_layout.nb_channels;
+    return m_avFrame->ch_layout.nb_channels;
 #else
-    return f->channels;
+    return m_avFrame->channels;
 #endif
 }
 
 int64_t Frame::nbSamples() const
 {
-    AVFrame* f = toAv(m_avFrame);
-    return f ? f->nb_samples : 0;
+    return m_avFrame ? m_avFrame->nb_samples : 0;
+}
+AVFrame* Frame::avFrame()
+{
+    return m_avFrame;
 }
 } // namespace media

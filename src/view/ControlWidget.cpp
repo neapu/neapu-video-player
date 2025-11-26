@@ -7,8 +7,8 @@
 #include <logger.h>
 
 namespace view {
-ControlWidget::ControlWidget(Player* player, QWidget* parent)
-    : QWidget(parent), m_player(player)
+ControlWidget::ControlWidget(PlayerController* playerController, QWidget* parent)
+    : QWidget(parent), m_playerController(playerController)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 10, 10, 10);
@@ -17,8 +17,8 @@ ControlWidget::ControlWidget(Player* player, QWidget* parent)
     createControlLayout(layout);
     setLayout(layout);
 
-    connect(m_player, &Player::mediaOpened, this, &ControlWidget::onDurationChanged);
-    connect(m_player, &Player::currentTimeChanged, this, &ControlWidget::onPlayingTimeChanged);
+    connect(m_playerController, &PlayerController::durationChanged, this, &ControlWidget::onDurationChanged, Qt::QueuedConnection);
+    connect(m_playerController, &PlayerController::positionChanged, this, &ControlWidget::onPlayingTimeChanged, Qt::QueuedConnection);
 }
 ControlWidget::~ControlWidget() {}
 
@@ -192,7 +192,7 @@ void ControlWidget::onTimelineSliderMoved(int value)
     QMutexLocker locker(&m_mutex);
     double sec = static_cast<double>(value) / 1000.0;
     NEAPU_LOGI("Timeline Slider Moved: {} seconds", sec);
-    m_player->seek(sec);
+    m_playerController->seek(sec);
 }
 void ControlWidget::onTimelineSliderPressed()
 {
@@ -200,7 +200,7 @@ void ControlWidget::onTimelineSliderPressed()
     m_timelineSliderDragging = true;
     double sec = static_cast<double>(m_timelineSlider->value()) / 1000.0;
     NEAPU_LOGI("Timeline Slider Pressed: {} seconds", sec);
-    m_player->seek(sec);
+    m_playerController->seek(sec);
 }
 void ControlWidget::onTimelineSliderReleased()
 {

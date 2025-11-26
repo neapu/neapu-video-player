@@ -5,12 +5,16 @@
 #include "VideoRenderer.h"
 #include <logger.h>
 #include <QFile>
-#include "../media/MediaDecoder.h"
+#include "../media/Packet.h"
+#include "../media/Player.h"
 
-using media::MediaDecoder;
 using media::Frame;
 
 namespace view {
+static int64_t getCurrentTimeUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 static const float vertexData[] = {
     // 位置         // 纹理坐标
     -1.0f,  1.0f,  0.0f, 0.0f,
@@ -122,18 +126,55 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
         return;
     }
 
-    {
-        std::unique_lock<std::mutex> lock(m_frameMutex);
-        if (m_nextFrame) {
-            bool needRecreatePipeline =
-                !m_currentFrame || (m_currentFrame->width() != m_nextFrame->width()) ||
-                (m_currentFrame->height() != m_nextFrame->height()) ||
-                (m_currentFrame->pixelFormat() != m_nextFrame->pixelFormat());
-            m_currentFrame = std::move(m_nextFrame);
-            if (needRecreatePipeline) {
-                if (!recreatePipeline()) {
-                    NEAPU_LOGE("Failed to recreate pipeline for new video frame");
-                }
+    if (!m_running) {
+        return;
+    }
+
+    if (!m_nextFrame) {
+        do {
+            m_nextFrame = media::Player::instance().getVideoFrame();
+            if (m_nextFrame && m_nextFrame->serial() == -1) {
+                // 收到结束帧
+                emit eof();
+                return;
+            }
+        } while (m_nextFrame && m_serial.load() > m_nextFrame->serial());
+    }
+
+    if (!m_nextFrame) {
+        // 没有新帧，继续用旧帧渲染
+        update();
+        return;
+    }
+
+    if (m_startTimeUs > 0) {
+        auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+        auto thresholdUs = static_cast<int64_t>(1e6 / m_fps);
+        if (m_nextFrame && m_nextFrame->ptsUs() >= expectedPlayTimeUs) {
+            // 当前帧还没到播放时间，继续用旧帧渲染
+            NEAPU_LOGD("Current video frame PTS {}us is ahead of expected play time {}us, continue using current frame, difference: {}us",
+                m_nextFrame->ptsUs(), expectedPlayTimeUs, m_nextFrame->ptsUs() - expectedPlayTimeUs);
+            update();
+            return;
+        }
+        while (m_nextFrame && m_nextFrame->ptsUs() < expectedPlayTimeUs - thresholdUs) {
+            // 丢弃过期帧
+            m_nextFrame = media::Player::instance().getVideoFrame();
+        }
+    } else {
+        m_startTimeUs = getCurrentTimeUs() - m_nextFrame->ptsUs();
+    }
+
+    if (m_nextFrame) {
+        bool needRecreatePipeline =
+            !m_currentFrame || (m_currentFrame->width() != m_nextFrame->width()) ||
+            (m_currentFrame->height() != m_nextFrame->height()) ||
+            (m_currentFrame->pixelFormat() != m_nextFrame->pixelFormat());
+        m_currentFrame = std::move(m_nextFrame);
+        m_nextFrame.reset();
+        if (needRecreatePipeline) {
+            if (!recreatePipeline()) {
+                NEAPU_LOGE("Failed to recreate pipeline for new video frame");
             }
         }
     }
@@ -154,25 +195,48 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
     cb->setVertexInput(0, 1, vertexInput);
     cb->draw(4);
     cb->endPass();
-}
-void VideoRenderer::onFrameReady(media::FramePtr&& newFrame)
-{
-    if (!newFrame) {
-        NEAPU_LOGE("Received null video frame");
-        return;
-    }
-    {
-        std::unique_lock<std::mutex> lock(m_frameMutex);
-        m_nextFrame = std::move(newFrame);
-    }
     update();
 }
+void VideoRenderer::start(double fps)
+{
+    NEAPU_FUNC_TRACE;
+    m_fps = fps;
+    m_running = true;
+    m_startTimeUs = getCurrentTimeUs();
+    update();
+}
+void VideoRenderer::stop()
+{
+    NEAPU_FUNC_TRACE;
+    m_running = false;
+}
+void VideoRenderer::seek(int serial)
+{
+    m_serial = serial;
+    m_startTimeUs = 0;
+}
+// void VideoRenderer::onFrameReady(media::FramePtr&& newFrame)
+// {
+//     if (!newFrame) {
+//         NEAPU_LOGE("Received null video frame");
+//         return;
+//     }
+//     {
+//         std::unique_lock<std::mutex> lock(m_frameMutex);
+//         m_nextFrame = std::move(newFrame);
+//     }
+//     update();
+// }
 #ifdef _WIN32
 ID3D11Device* VideoRenderer::getD3D11Device()
 {
     return m_d3d11Device;
 }
 #endif
+void VideoRenderer::onAudioPtsUpdated(int64_t ptsUs)
+{
+    m_startTimeUs = getCurrentTimeUs() - ptsUs;
+}
 bool VideoRenderer::recreatePipeline()
 {
     if (!recreateTextures()) {
@@ -389,6 +453,7 @@ void VideoRenderer::updateTextures(QRhiResourceUpdateBatch* rub)
         NEAPU_LOGE("Current frame is null when updating textures");
         return;
     }
+    emit playingPts(m_currentFrame->ptsUs());
     if (m_currentFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
         updateD3D11Texture();
     } else {

@@ -6,6 +6,8 @@
 #include <memory>
 #include <cstdint>
 
+typedef struct AVFrame AVFrame;
+
 #ifdef _WIN32
 struct ID3D11Texture2D;
 #endif
@@ -13,13 +15,17 @@ struct ID3D11Texture2D;
 namespace media {
 class Frame final {
 public:
-    explicit Frame(void* avFrame);
+    explicit Frame(int serial);
     ~Frame();
 
     Frame(const Frame& other) = delete;
     Frame& operator=(const Frame& other) = delete;
     Frame(Frame&& other) noexcept;
     Frame& operator=(Frame&& other) noexcept;
+
+    int serial() const { return m_serial; }
+
+    void copyMetaDataFrom(const Frame& other);
 
     const uint8_t* data(int index) const;
     int lineSize(int index) const;
@@ -61,8 +67,11 @@ public:
     int channels() const;
     int64_t nbSamples() const;
 
+    AVFrame* avFrame();
+
 private:
-    void* m_avFrame{nullptr};
+    AVFrame* m_avFrame{nullptr};
+    int m_serial{0};
 };
 using FramePtr = std::unique_ptr<Frame>;
 } // namespace media
