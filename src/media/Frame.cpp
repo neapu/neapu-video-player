@@ -19,8 +19,8 @@ extern "C" {
 
 namespace media {
 
-Frame::Frame(int serial)
-    : m_serial(serial)
+Frame::Frame(FrameType type, int serial)
+    : m_type(type), m_serial(serial)
 {
     m_avFrame = av_frame_alloc();
     if (!m_avFrame) {

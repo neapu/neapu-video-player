@@ -64,6 +64,9 @@ void PlayerController::onClose()
 }
 void PlayerController::seek(double seconds)
 {
+    if (m_videoRenderer->seeking() || m_audioRenderer->seeking()) {
+        return;
+    }
     m_serial++;
     m_videoRenderer->seek(m_serial);
     m_audioRenderer->seek(m_serial);

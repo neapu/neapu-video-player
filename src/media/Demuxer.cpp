@@ -184,18 +184,16 @@ void Demuxer::readThreadFunc()
                 break;
             }
             if (m_videoStream) {
-                m_videoQueue.clear();
-                m_videoQueue.push(std::make_unique<Packet>(Packet::PacketType::Flush, m_serial.load()));
+                m_videoQueue.clearAndFlush(m_serial);
             }
             if (m_audioStream) {
-                m_audioQueue.clear();
-                m_audioQueue.push(std::make_unique<Packet>(Packet::PacketType::Flush, m_serial.load()));
+                m_audioQueue.clearAndFlush(m_serial);
             }
             m_isEof = false;
             m_seekRequested = false;
         }
 
-        auto packet = std::make_unique<Packet>(Packet::PacketType::Video, m_serial.load());
+        auto packet = std::make_unique<Packet>(Packet::PacketType::Normal, m_serial.load());
         int ret = av_read_frame(m_fmtCtx, packet->avPacket());
         if (ret < 0) {
             if (ret == AVERROR_EOF) {
@@ -214,10 +212,8 @@ void Demuxer::readThreadFunc()
             }
         }
         if (m_videoStream && packet->avPacket()->stream_index == m_videoStream->index) {
-            packet->setType(Packet::PacketType::Video);
             m_videoQueue.push(std::move(packet));
         } else if (m_audioStream && packet->avPacket()->stream_index == m_audioStream->index) {
-            packet->setType(Packet::PacketType::Audio);
             m_audioQueue.push(std::move(packet));
         }
     }

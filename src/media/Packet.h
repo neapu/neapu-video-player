@@ -11,8 +11,7 @@ namespace media {
 class Packet {
 public:
     enum class PacketType {
-        Audio,
-        Video,
+        Normal,
         Flush,
         Eof
     };
@@ -35,7 +34,7 @@ public:
 
 private:
     AVPacket* m_avPacket{nullptr};
-    PacketType m_type{PacketType::Video};
+    PacketType m_type{PacketType::Normal};
     int m_serial{0};
 };
 using PacketPtr = std::unique_ptr<Packet>;

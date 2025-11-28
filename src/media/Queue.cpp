@@ -88,6 +88,20 @@ void PacketQueue::clear()
     m_condVar.notify_all();
 }
 
+void PacketQueue::clearAndFlush(int serial)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ++m_clearToken;
+    while (!m_queue.empty()) {
+        m_queue.pop();
+    }
+    m_dataSize = 0;
+    auto packet = std::make_unique<Packet>(Packet::PacketType::Flush, serial);
+    m_dataSize += packet->size();
+    m_queue.push(std::move(packet));
+    m_condVar.notify_all();
+}
+
 FrameQueue::FrameQueue(size_t maxQueueSize)
     : m_maxQueueSize(maxQueueSize)
 {
@@ -146,6 +160,18 @@ void FrameQueue::clear()
         m_queue.pop();
     }
     m_queueSize = 0;
+    m_condVar.notify_all();
+}
+void FrameQueue::clearAndFlush(int serial)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    ++m_clearToken;
+    while (!m_queue.empty()) {
+        m_queue.pop();
+    }
+    m_queueSize = 0;
+    m_queue.push(std::make_unique<Frame>(Frame::FrameType::Flush, serial));
+    ++m_queueSize;
     m_condVar.notify_all();
 }
 

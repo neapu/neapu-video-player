@@ -15,7 +15,12 @@ struct ID3D11Texture2D;
 namespace media {
 class Frame final {
 public:
-    explicit Frame(int serial);
+    enum class FrameType {
+        Normal,
+        Flush,
+        EndOfStream,
+    };
+    explicit Frame(FrameType type, int serial);
     ~Frame();
 
     Frame(const Frame& other) = delete;
@@ -24,6 +29,7 @@ public:
     Frame& operator=(Frame&& other) noexcept;
 
     int serial() const { return m_serial; }
+    FrameType type() const { return m_type; }
 
     void copyMetaDataFrom(const Frame& other);
 
@@ -70,6 +76,7 @@ public:
     AVFrame* avFrame();
 
 private:
+    FrameType m_type{FrameType::Normal};
     AVFrame* m_avFrame{nullptr};
     int m_serial{0};
 };

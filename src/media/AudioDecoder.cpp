@@ -67,7 +67,7 @@ FramePtr AudioDecoder::postProcess(FramePtr&& frame)
     }
 
     // 格式转换为 AV_SAMPLE_FMT_S16，采样率和通道数保持不变
-    auto convertedFrame = std::make_unique<Frame>(frame->serial());
+    auto convertedFrame = std::make_unique<Frame>(Frame::FrameType::Normal, frame->serial());
 
     bool needReinit = false;
     if (!m_swrCtx) needReinit = true;

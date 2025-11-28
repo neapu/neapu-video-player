@@ -29,6 +29,7 @@ public:
     void stop();
 
     void seek(int serial);
+    bool seeking() const { return m_seeking.load(); }
 
     // void onFrameReady(media::FramePtr&& newFrame);
 
@@ -62,6 +63,9 @@ private:
 
     QString getFragmentShaderName();
 
+
+    void getNextFrame();
+
 private:
     QRhi* m_rhi{nullptr};
     std::unique_ptr<QRhiGraphicsPipeline> m_pipeline{};
@@ -81,6 +85,7 @@ private:
     std::atomic<double> m_fps{30.0};
     std::atomic<int64_t> m_startTimeUs{0};
     std::atomic_int m_serial{0};
+    std::atomic_bool m_seeking{false};
 
 #ifdef _WIN32
     ID3D11Device* m_d3d11Device{nullptr};

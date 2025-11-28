@@ -5,7 +5,7 @@
 #pragma once
 #include <QObject>
 #include "../media/Frame.h"
-#include <thread>
+#include <atomic>
 
 typedef struct ma_device ma_device;
 
@@ -20,6 +20,8 @@ public:
     void stop();
 
     void seek(int serial);
+
+    bool seeking() const { return m_seeking.load(); }
 
 signals:
     void playingStateChanged(bool playing);
@@ -41,6 +43,8 @@ private:
 
     std::atomic<int64_t> m_startTimeUs{0};
     std::atomic_int m_serial{0};
+    std::atomic_bool m_seeking{false};
+    std::atomic_bool m_running{false};
 };
 
 } // namespace view

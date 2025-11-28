@@ -167,7 +167,7 @@ FramePtr VideoDecoder::convertFixelFormat(FramePtr&& avFrame)
         }
     }
 
-    auto retFrame = std::make_unique<Frame>(avFrame->serial());
+    auto retFrame = std::make_unique<Frame>(Frame::FrameType::Normal, avFrame->serial());
     retFrame->avFrame()->format = AV_PIX_FMT_YUV420P;
     retFrame->avFrame()->width = avFrame->width();
     retFrame->avFrame()->height = avFrame->height();
@@ -196,7 +196,7 @@ FramePtr VideoDecoder::convertFixelFormat(FramePtr&& avFrame)
 }
 FramePtr VideoDecoder::hwFrameTransfer(FramePtr&& avFrame)
 {
-    auto swFrame = std::make_unique<Frame>(avFrame->serial());
+    auto swFrame = std::make_unique<Frame>(Frame::FrameType::Normal, avFrame->serial());
     int ret = av_hwframe_transfer_data(swFrame->avFrame(), avFrame->avFrame(), 0);
     if (ret < 0) {
         std::string errStr = getFFmpegErrorString(ret);

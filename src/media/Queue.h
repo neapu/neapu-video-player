@@ -12,7 +12,7 @@
 namespace media {
 class PacketQueue {
 public:
-    PacketQueue(size_t maxDataSize);
+    explicit PacketQueue(size_t maxDataSize);
     ~PacketQueue();
     PacketQueue(const PacketQueue&) = delete;
     PacketQueue& operator=(const PacketQueue&) = delete;
@@ -24,6 +24,7 @@ public:
 
     void notifyAll();
     void clear();
+    void clearAndFlush(int serial);
 
 private:
     std::queue<PacketPtr> m_queue;
@@ -35,7 +36,7 @@ private:
 };
 class FrameQueue {
 public:
-    FrameQueue(size_t maxQueueSize);
+    explicit FrameQueue(size_t maxQueueSize);
     ~FrameQueue();
 
     void push(FramePtr&& frame);
@@ -43,6 +44,7 @@ public:
 
     void notifyAll();
     void clear();
+    void clearAndFlush(int serial);
 
 private:
     std::queue<FramePtr> m_queue;

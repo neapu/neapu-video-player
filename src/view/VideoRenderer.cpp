@@ -5,6 +5,7 @@
 #include "VideoRenderer.h"
 #include <logger.h>
 #include <QFile>
+#include <QThreadPool>
 #include "../media/Packet.h"
 #include "../media/Player.h"
 
@@ -130,41 +131,6 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
         return;
     }
 
-    if (!m_nextFrame) {
-        do {
-            m_nextFrame = media::Player::instance().getVideoFrame();
-            if (m_nextFrame && m_nextFrame->serial() == -1) {
-                // 收到结束帧
-                emit eof();
-                return;
-            }
-        } while (m_nextFrame && m_serial.load() > m_nextFrame->serial());
-    }
-
-    if (!m_nextFrame) {
-        // 没有新帧，继续用旧帧渲染
-        update();
-        return;
-    }
-
-    if (m_startTimeUs > 0) {
-        auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-        auto thresholdUs = static_cast<int64_t>(1e6 / m_fps);
-        if (m_nextFrame && m_nextFrame->ptsUs() >= expectedPlayTimeUs) {
-            // 当前帧还没到播放时间，继续用旧帧渲染
-            NEAPU_LOGD("Current video frame PTS {}us is ahead of expected play time {}us, continue using current frame, difference: {}us",
-                m_nextFrame->ptsUs(), expectedPlayTimeUs, m_nextFrame->ptsUs() - expectedPlayTimeUs);
-            update();
-            return;
-        }
-        while (m_nextFrame && m_nextFrame->ptsUs() < expectedPlayTimeUs - thresholdUs) {
-            // 丢弃过期帧
-            m_nextFrame = media::Player::instance().getVideoFrame();
-        }
-    } else {
-        m_startTimeUs = getCurrentTimeUs() - m_nextFrame->ptsUs();
-    }
-
     if (m_nextFrame) {
         bool needRecreatePipeline =
             !m_currentFrame || (m_currentFrame->width() != m_nextFrame->width()) ||
@@ -177,6 +143,9 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
                 NEAPU_LOGE("Failed to recreate pipeline for new video frame");
             }
         }
+    } else {
+        NEAPU_LOGE("No video frame available for rendering");
+        return;
     }
 
     const QSize pixelSize = renderTarget()->pixelSize();
@@ -184,6 +153,8 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
 
     updateTextures(rub);
     updateVertexUniformBuffer(rub, pixelSize);
+
+    getNextFrame();
 
     cb->beginPass(renderTarget(), QColor(0, 0, 0, 255), {1.0f, 0}, rub);
 
@@ -195,7 +166,6 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
     cb->setVertexInput(0, 1, vertexInput);
     cb->draw(4);
     cb->endPass();
-    update();
 }
 void VideoRenderer::start(double fps)
 {
@@ -203,7 +173,7 @@ void VideoRenderer::start(double fps)
     m_fps = fps;
     m_running = true;
     m_startTimeUs = getCurrentTimeUs();
-    update();
+    getNextFrame();
 }
 void VideoRenderer::stop()
 {
@@ -212,8 +182,9 @@ void VideoRenderer::stop()
 }
 void VideoRenderer::seek(int serial)
 {
+    NEAPU_LOGD("Seeking video renderer to serial {}", serial);
+    m_seeking = true;
     m_serial = serial;
-    m_startTimeUs = 0;
 }
 // void VideoRenderer::onFrameReady(media::FramePtr&& newFrame)
 // {
@@ -453,6 +424,7 @@ void VideoRenderer::updateTextures(QRhiResourceUpdateBatch* rub)
         NEAPU_LOGE("Current frame is null when updating textures");
         return;
     }
+    NEAPU_LOGD("Render pts={}us", m_currentFrame->ptsUs());
     emit playingPts(m_currentFrame->ptsUs());
     if (m_currentFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
         updateD3D11Texture();
@@ -649,6 +621,69 @@ QString VideoRenderer::getFragmentShaderName()
     }
 
     return QString(":/shaders/%1.frag.qsb").arg(name);
+}
+void VideoRenderer::getNextFrame()
+{
+    QThreadPool::globalInstance()->start([this]() {
+        while (m_running) {
+            auto nextFrame = media::Player::instance().getVideoFrame();
+            if (!nextFrame) {
+                // 正常情况下不应出现
+                NEAPU_LOGE("Received null video frame");
+                continue;
+            }
+            if (nextFrame->type() == Frame::FrameType::EndOfStream) {
+                // 收到结束帧
+                NEAPU_LOGI("Received end-of-file video frame");
+                emit eof();
+                return;
+            }
+
+
+            if (nextFrame->serial() < m_serial) {
+                // 丢弃过期帧
+                NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
+                    nextFrame->serial(), m_serial.load());
+                continue;
+            }
+            if (nextFrame->type() == Frame::FrameType::Flush) {
+                m_startTimeUs = 0;
+                m_seeking = false;
+                NEAPU_LOGD("Received flush video frame, resetting start time");
+                continue;
+            }
+            if (m_startTimeUs == 0) {
+                // 这个值为0代表是刚seek过，需要重新计算startTimeUs
+                m_startTimeUs = getCurrentTimeUs() - nextFrame->ptsUs();
+                m_nextFrame = std::move(nextFrame);
+                update();
+                return;
+            }
+            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+
+            // 如果pts早于预播放时间，并且超过了阈值，则丢弃
+            auto thresholdUs = static_cast<int64_t>(1e6 / m_fps);
+            if (nextFrame->ptsUs() < expectedPlayTimeUs - thresholdUs) {
+                NEAPU_LOGD("Discarding late video frame with PTS {}us, expected play time {}us",
+                    nextFrame->ptsUs(), expectedPlayTimeUs);
+                continue;
+            }
+            // 如果pts晚与预播放时间，说明还没到播放时间，需要等待
+            int64_t waitTimeUs = nextFrame->ptsUs() - expectedPlayTimeUs;
+            if (waitTimeUs > 1e6) {
+                // 等待超过1秒，不正常
+                NEAPU_LOGE("Unrealistic wait time for video frame: {}us", waitTimeUs);
+                waitTimeUs = 1e6;
+            }
+            if (waitTimeUs > 0) {
+                // NEAPU_LOGD("Waiting {}us for video frame with PTS {}us", waitTimeUs, nextFrame->ptsUs());
+                QThread::usleep(static_cast<unsigned long>(waitTimeUs));
+            }
+            m_nextFrame = std::move(nextFrame);
+            update();
+            return;
+        }
+    });
 }
 
 } // namespace view

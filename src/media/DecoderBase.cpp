@@ -89,7 +89,7 @@ bool DecoderBase::testDecode()
 FramePtr DecoderBase::getFrame()
 {
     auto frame = m_frameQueue.pop();
-    NEAPU_LOGD("{} Decoder get frame PTS {}", m_type == CodecType::Video ? "Video" : "Audio", frame ? frame->avFrame()->pts : -1);
+    NEAPU_LOGD("{} Decoder get frame PTS {}", m_type == CodecType::Video ? "Video" : "Audio", frame ? frame->ptsUs() : -1);
     return frame;
 }
 void DecoderBase::initializeContext()
@@ -119,18 +119,18 @@ void DecoderBase::decodeThreadFunc()
     while (m_running) {
         auto packet = m_packetCallback();
         if (!packet) {
-            NEAPU_LOGE("Decoder received null packet");
-            break;
+            NEAPU_LOGE("{} Decoder received null packet", m_type == CodecType::Video ? "Video" : "Audio");
+            continue;
         }
         if (packet->type() == Packet::PacketType::Eof) {
             NEAPU_LOGI("{} Decoder received EOF packet", m_type == CodecType::Video ? "Video" : "Audio");
-            m_frameQueue.push(std::make_unique<Frame>(-1));
+            m_frameQueue.push(std::make_unique<Frame>(Frame::FrameType::EndOfStream, -1));
             break;
         }
         if (packet->type() == Packet::PacketType::Flush) {
             avcodec_flush_buffers(m_codecCtx);
-            m_frameQueue.clear();
             m_serial = packet->serial();
+            m_frameQueue.clearAndFlush(m_serial);
             NEAPU_LOGI("{} Decoder received Flush packet, serial {}", m_type == CodecType::Video ? "Video" : "Audio", m_serial);
             continue;
         }
@@ -151,7 +151,7 @@ void DecoderBase::decodeThreadFunc()
         }
 
         for (;;) {
-            auto frame = std::make_unique<Frame>(m_serial);
+            auto frame = std::make_unique<Frame>(Frame::FrameType::Normal, m_serial);
             ret = avcodec_receive_frame(m_codecCtx, frame->avFrame());
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 break;
@@ -163,7 +163,7 @@ void DecoderBase::decodeThreadFunc()
             frame->avFrame()->time_base = m_stream->time_base;
             auto processedFrame = postProcess(std::move(frame));
             if (processedFrame) {
-                NEAPU_LOGD("{} Decoder produced frame PTS {}", m_type == CodecType::Video ? "Video" : "Audio", processedFrame->avFrame()->pts);
+                // NEAPU_LOGD("{} Decoder produced frame PTS {}", m_type == CodecType::Video ? "Video" : "Audio", processedFrame->avFrame()->pts);
                 m_frameQueue.push(std::move(processedFrame));
             } else {
                 NEAPU_LOGE("{} Post processing of frame failed", m_type == CodecType::Video ? "Video" : "Audio");
