@@ -127,34 +127,34 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
         return;
     }
 
-    if (!m_running) {
-        return;
-    }
-
-    if (m_nextFrame) {
-        bool needRecreatePipeline =
-            !m_currentFrame || (m_currentFrame->width() != m_nextFrame->width()) ||
-            (m_currentFrame->height() != m_nextFrame->height()) ||
-            (m_currentFrame->pixelFormat() != m_nextFrame->pixelFormat());
-        m_currentFrame = std::move(m_nextFrame);
-        m_nextFrame.reset();
-        if (needRecreatePipeline) {
-            if (!recreatePipeline()) {
-                NEAPU_LOGE("Failed to recreate pipeline for new video frame");
-            }
-        }
-    } else {
-        NEAPU_LOGE("No video frame available for rendering");
-        return;
-    }
-
     const QSize pixelSize = renderTarget()->pixelSize();
     auto rub = m_rhi->nextResourceUpdateBatch();
 
-    updateTextures(rub);
-    updateVertexUniformBuffer(rub, pixelSize);
+    if (m_running) {
+        if (m_nextFrame) {
+            bool needRecreatePipeline =
+                !m_currentFrame || (m_currentFrame->width() != m_nextFrame->width()) ||
+                (m_currentFrame->height() != m_nextFrame->height()) ||
+                (m_currentFrame->pixelFormat() != m_nextFrame->pixelFormat());
+            m_currentFrame = std::move(m_nextFrame);
+            m_nextFrame.reset();
+            if (needRecreatePipeline) {
+                if (!recreatePipeline()) {
+                    NEAPU_LOGE("Failed to recreate pipeline for new video frame");
+                }
+            }
+        } else {
+            NEAPU_LOGE("No video frame available for rendering");
+            return;
+        }
 
-    getNextFrame();
+        updateTextures(rub);
+        updateVertexUniformBuffer(rub, pixelSize);
+
+        getNextFrame();
+    } else {
+        createEmptyPipeline();
+    }
 
     cb->beginPass(renderTarget(), QColor(0, 0, 0, 255), {1.0f, 0}, rub);
 
@@ -179,6 +179,11 @@ void VideoRenderer::stop()
 {
     NEAPU_FUNC_TRACE;
     m_running = false;
+    m_currentFrame.reset();
+    m_nextFrame.reset();
+    m_startTimeUs = 0;
+    m_serial = 0;
+    update();
 }
 void VideoRenderer::seek(int serial)
 {

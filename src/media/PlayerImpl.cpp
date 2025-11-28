@@ -141,7 +141,7 @@ void PlayerImpl::createVideoDecoder()
             );
 
             auto ret = videoDecoder->testDecode();
-            m_demuxer->seek(0, m_param.baseSerial);
+            m_demuxer->seek(0, m_param.baseSerial, true);
             if (!ret) {
                 NEAPU_LOGW("Video decoder test decode failed with method {}", static_cast<int>(method));
                 continue;

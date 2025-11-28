@@ -125,10 +125,11 @@ PacketPtr Demuxer::getAudioPacket()
     }
     return m_audioQueue.pop();
 }
-void Demuxer::seek(double seconds, int serial)
+void Demuxer::seek(double seconds, int serial, bool noFlush)
 {
     m_seekTarget = seconds;
     m_serial = serial;
+    m_noFlush = noFlush;
     m_seekRequested = true;
     m_videoQueue.clear();
     m_audioQueue.clear();
@@ -141,6 +142,12 @@ void Demuxer::seek(double seconds, int serial)
         m_running = true;
         m_readThread = std::thread(&Demuxer::readThreadFunc, this);
     }
+}
+
+void Demuxer::clear()
+{
+    m_videoQueue.clear();
+    m_audioQueue.clear();
 }
 
 double Demuxer::durationSeconds() const
@@ -183,12 +190,22 @@ void Demuxer::readThreadFunc()
                 m_isEof = true;
                 break;
             }
-            if (m_videoStream) {
-                m_videoQueue.clearAndFlush(m_serial);
+            if (m_noFlush) {
+                if (m_videoStream) {
+                    m_videoQueue.clear();
+                }
+                if (m_audioStream) {
+                    m_audioQueue.clear();
+                }
+            } else {
+                if (m_videoStream) {
+                    m_videoQueue.clearAndFlush(m_serial);
+                }
+                if (m_audioStream) {
+                    m_audioQueue.clearAndFlush(m_serial);
+                }
             }
-            if (m_audioStream) {
-                m_audioQueue.clearAndFlush(m_serial);
-            }
+
             m_isEof = false;
             m_seekRequested = false;
         }

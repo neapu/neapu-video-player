@@ -30,7 +30,7 @@ signals:
 
 private:
     void maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount);
-    void updateCurrentData();
+    void updateCurrentData(int64_t thresholdUs);
     void setPlaying(bool playing);
 
 private:
@@ -39,6 +39,7 @@ private:
     ma_device* m_device{nullptr};
 
     media::FramePtr m_currentData{nullptr};
+    media::FramePtr m_nextData{nullptr};
     size_t m_offset{0};
 
     std::atomic<int64_t> m_startTimeUs{0};

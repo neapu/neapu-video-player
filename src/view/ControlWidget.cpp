@@ -16,9 +16,11 @@ ControlWidget::ControlWidget(PlayerController* playerController, QWidget* parent
     createTimelineLayout(layout);
     createControlLayout(layout);
     setLayout(layout);
+    m_timelineSlider->setEnabled(false);
 
     connect(m_playerController, &PlayerController::durationChanged, this, &ControlWidget::onDurationChanged, Qt::QueuedConnection);
     connect(m_playerController, &PlayerController::positionChanged, this, &ControlWidget::onPlayingTimeChanged, Qt::QueuedConnection);
+    connect(m_playerController, &PlayerController::stateChanged, this, &ControlWidget::onPlayStateChanged, Qt::QueuedConnection);
 }
 ControlWidget::~ControlWidget() {}
 
@@ -49,6 +51,24 @@ void ControlWidget::onPlayingTimeChanged(double seconds)
     QMutexLocker locker(&m_mutex);
     if (!m_timelineSliderDragging) {
         m_timelineSlider->setValue(static_cast<int>(m_currentTime*1000));
+    }
+}
+void ControlWidget::onPlayStateChanged(PlayerController::State state)
+{
+    if (state == PlayerController::State::Playing) {
+        // m_playPauseButton->setIcon(QIcon(":/svg/pause.svg"));
+        QMutexLocker locker(&m_mutex);
+        m_timelineSlider->setEnabled(true);
+    } else if (state == PlayerController::State::Pause) {
+        // m_playPauseButton->setIcon(QIcon(":/svg/play.svg"));
+    } else if (state == PlayerController::State::Stopped) {
+        // m_playPauseButton->setIcon(QIcon(":/svg/play.svg"));
+        QMutexLocker locker(&m_mutex);
+        m_timelineSlider->setValue(0);
+        m_currentTimeLabel->setText("00:00:00");
+        m_totalTimeLabel->setText("00:00:00");
+        m_currentTime = 0;
+        m_timelineSlider->setEnabled(false);
     }
 }
 

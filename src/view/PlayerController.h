@@ -12,6 +12,11 @@ namespace view {
 class PlayerController : public QObject {
     Q_OBJECT
 public:
+    enum class State {
+        Stopped,
+        Playing,
+        Pause
+    };
     explicit PlayerController(VideoRenderer* videoRenderer, QObject* parent = nullptr);
     ~PlayerController() override;
 
@@ -20,9 +25,12 @@ public:
 
     void seek(double seconds);
 
+    State state() const { return m_state; }
+
 signals:
     void durationChanged(double seconds);
     void positionChanged(double seconds);
+    void stateChanged(State state);
 
 private:
     void checkEof();
@@ -41,6 +49,7 @@ private:
     std::atomic_bool m_videoEof{false};
 
     int m_serial{0};
+    State m_state{State::Stopped};
 };
 
 } // namespace view

@@ -36,7 +36,8 @@ public:
 
     bool isEof() const { return m_isEof.load(); }
 
-    void seek(double seconds, int serial);
+    void seek(double seconds, int serial, bool noFlush = false);
+    void clear();
 
     double durationSeconds() const;
 
@@ -59,6 +60,7 @@ private:
     std::atomic_bool m_running{true};
 
     std::atomic_int m_serial{0};
+    std::atomic_bool m_noFlush{false};
 };
 
 } // namespace media

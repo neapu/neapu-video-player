@@ -30,12 +30,15 @@ void PlayerController::onOpen()
         return;
     }
 
-    Player::instance().close();
+    onClose();
 
     Player::OpenParam param;
     param.url = filePath.toStdString();
-    param.swDecodeOnly = true;
+    // param.swDecodeOnly = true;
     param.baseSerial = m_serial;
+#ifdef _WIN32
+    param.d3d11Device = m_videoRenderer->getD3D11Device();
+#endif
 
     if (!Player::instance().open(param)) {
         NEAPU_LOGE("Failed to open media file: {}", param.url);
@@ -54,6 +57,8 @@ void PlayerController::onOpen()
     } else {
         m_audioEof = true;
     }
+    m_state = State::Playing;
+    emit stateChanged(m_state);
     emit durationChanged(Player::instance().durationSeconds());
 }
 void PlayerController::onClose()
@@ -61,6 +66,9 @@ void PlayerController::onClose()
     m_audioRenderer->stop();
     m_videoRenderer->stop();
     Player::instance().close();
+    m_serial = 0;
+    m_state = State::Stopped;
+    emit stateChanged(m_state);
 }
 void PlayerController::seek(double seconds)
 {
@@ -77,6 +85,9 @@ void PlayerController::checkEof()
     if (m_audioEof && m_videoEof) {
         NEAPU_LOGI("Playback reached end of file");
         Player::instance().close();
+        m_serial = 0;
+        m_state = State::Stopped;
+        emit stateChanged(m_state);
     }
 }
 void PlayerController::onAudioEof()

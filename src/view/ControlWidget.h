@@ -25,6 +25,7 @@ public:
 public slots:
     void onDurationChanged(double durationSeconds);
     void onPlayingTimeChanged(double seconds);
+    void onPlayStateChanged(PlayerController::State state);
 
 private:
     void createTimelineLayout(QBoxLayout* parentLayout);

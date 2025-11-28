@@ -66,6 +66,10 @@ void AudioRenderer::stop()
 {
     NEAPU_FUNC_TRACE;
     m_running = false;
+    m_nextData.reset();
+    m_currentData.reset();
+    m_startTimeUs = 0;
+    m_serial = 0;
     if (m_device) {
         ma_device_stop(m_device);
         ma_device_uninit(m_device);
@@ -84,7 +88,7 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
     const auto requireSize = static_cast<size_t>(frameCount) * channels * sizeof(int16_t);
     size_t copyOffset = 0;
     while (copyOffset < requireSize) {
-        updateCurrentData();
+        updateCurrentData(1000000 * frameCount / pDevice->sampleRate);
         auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
         // 本次请求的播放时长
         auto requestDurationUs = static_cast<int64_t>(1e6 * (requireSize - copyOffset) / (channels * sizeof(int16_t) * pDevice->sampleRate));
@@ -110,88 +114,56 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
         }
     }
 }
-void AudioRenderer::updateCurrentData()
+void AudioRenderer::updateCurrentData(int64_t thresholdUs)
 {
-    // if (!m_currentData) {
-    //     auto newFrame = media::Player::instance().getAudioFrame();
-    //     if (newFrame && newFrame->type() == media::Frame::FrameType::EndOfStream) {
-    //         emit eof();
-    //         return;
-    //     }
-    //     while (newFrame && m_serial > newFrame->serial()) {
-    //         // 丢弃旧数据，重新开始计时
-    //         newFrame = media::Player::instance().getAudioFrame();
-    //     }
-    //     if (newFrame->type() == media::Frame::FrameType::Flush) {
-    //         m_startTimeUs = 0;
-    //         newFrame = media::Player::instance().getAudioFrame();
-    //         m_seeking = false;
-    //     }
-    //     if (!newFrame) return;
-    //     if (m_startTimeUs > 0) {
-    //         auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-    //         while (newFrame && newFrame->ptsUs() > expectedPlayTimeUs + newFrame->durationUs()) {
-    //             newFrame = media::Player::instance().getAudioFrame();
-    //         }
-    //     }
-    //     if (!newFrame) return;
-    //     // 反向校准
-    //     m_startTimeUs = getCurrentTimeUs() - newFrame->ptsUs();
-    //     emit playingPts(newFrame->ptsUs());
-    //     m_currentData = std::move(newFrame);
-    //     m_offset = 0;
-    // }
-    if (!m_currentData) {
-        while (m_running) {
-            auto nextFrame = media::Player::instance().getAudioFrame();
-            if (!nextFrame) {
-                // 不应出现这种情况
-                NEAPU_LOGE("Failed to get audio frame from player");
+    if (m_currentData) {
+        return;
+    }
+    while (m_running) {
+        if (!m_nextData) {
+            m_nextData = media::Player::instance().getAudioFrame();
+        }
+        if (!m_nextData) {
+            NEAPU_LOGE("Received null audio frame");
+            return;
+        }
+        if (m_nextData->type() == media::Frame::FrameType::EndOfStream) {
+            NEAPU_LOGI("Received end-of-file audio frame");
+            emit eof();
+            return;
+        }
+        if (m_nextData->serial() < m_serial) {
+            m_nextData.reset();
+            continue;
+        }
+        if (m_nextData->type() == media::Frame::FrameType::Flush) {
+            m_startTimeUs = 0;
+            m_seeking = false;
+            NEAPU_LOGD("Received flush audio frame, resetting start time");
+            m_nextData.reset();
+            continue;
+        }
+        if (m_startTimeUs > 0) {
+            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+            // 如果pts早于预播放时间，并且超过了阈值，则丢弃
+            if (m_nextData->ptsUs() < expectedPlayTimeUs - thresholdUs) {
+                NEAPU_LOGD("Discarding late audio frame with PTS {}us, expected play time {}us",
+                    m_nextData->ptsUs(), expectedPlayTimeUs);
+                m_nextData.reset();
                 continue;
             }
-            if (nextFrame->type() == media::Frame::FrameType::EndOfStream) {
-                NEAPU_LOGI("Audio renderer reached end of stream");
-                emit eof();
+            // 如果pts晚与预播放时间，说明还没到播放时间，输出空帧
+            int64_t waitTimeUs = m_nextData->ptsUs() - expectedPlayTimeUs;
+            if (waitTimeUs > thresholdUs) {
                 return;
             }
-            if (m_serial > nextFrame->serial()) {
-                NEAPU_LOGD("Discarding old audio frame with serial {}, current serial {}",
-                    nextFrame->serial(), m_serial.load());
-                continue;
-            }
-            if (nextFrame->type() == media::Frame::FrameType::Flush) {
-                m_startTimeUs = 0;
-                m_seeking = false;
-                NEAPU_LOGI("Audio renderer received flush frame, resetting start time");
-                continue;
-            }
-            if (m_startTimeUs > 0) {
-                auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-                // 如果当前帧的PTS小于预播放时间，并且超过了当前帧的持续时间，表示该帧已经过期，继续取下一帧
-                if (nextFrame->ptsUs() + nextFrame->durationUs() < expectedPlayTimeUs) {
-                    NEAPU_LOGD("Discarding expired audio frame PTS {} (expected {})",
-                        nextFrame->ptsUs(), expectedPlayTimeUs);
-                    continue;
-                }
-                // 如果当前帧的PTS已经超过预期播放时间，表示还没到播放时间，需要等待
-                auto sleepNeeded = nextFrame->ptsUs() - expectedPlayTimeUs;
-                if (sleepNeeded > 1000000) {
-                    // 超过1秒，不正常情况
-                    NEAPU_LOGW("Audio frame PTS {} is far in the future (expected {}). Resetting start time.",
-                        nextFrame->ptsUs(), expectedPlayTimeUs);
-                    sleepNeeded = 1000000;
-                }
-                if (sleepNeeded > 0) {
-                    std::this_thread::sleep_for(std::chrono::microseconds(sleepNeeded));
-                }
-            }
-            m_currentData = std::move(nextFrame);
-            m_offset = 0;
-            // 反向校准开始时间
-            m_startTimeUs = getCurrentTimeUs() - m_currentData->ptsUs();
-            emit playingPts(m_currentData->ptsUs());
-            break;
         }
+        m_currentData = std::move(m_nextData);
+        m_offset = 0;
+        // 反向校准startTimeUs
+        m_startTimeUs = getCurrentTimeUs() - m_currentData->ptsUs();
+        emit playingPts(m_currentData->ptsUs());
+        return;
     }
 }
 
