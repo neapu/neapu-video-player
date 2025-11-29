@@ -127,34 +127,99 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
         return;
     }
 
+    if (m_pause) {
+        return;
+    }
+
+    RenderImpl(cb);
+    if (m_running) {
+        update();
+    }
+}
+void VideoRenderer::start(double fps, int64_t startTimeUs)
+{
+    NEAPU_FUNC_TRACE;
+    m_fps = fps;
+    m_running = true;
+    m_pause = false;
+    m_startTimeUs = startTimeUs;
+    update();
+}
+void VideoRenderer::stop()
+{
+    NEAPU_FUNC_TRACE;
+    m_running = false;
+    m_pause = false;
+    m_renderFrame.reset();
+    m_startTimeUs = 0;
+    m_serial = 0;
+    update();
+}
+
+void VideoRenderer::pause()
+{
+    m_pause = true;
+}
+
+void VideoRenderer::seek(int serial)
+{
+    NEAPU_LOGD("Seeking video renderer to serial {}", serial);
+    m_seeking = true;
+    m_serial = serial;
+}
+int64_t VideoRenderer::currentPtsUs() const
+{
+    return m_currentPtsUs;
+}
+#ifdef _WIN32
+ID3D11Device* VideoRenderer::getD3D11Device()
+{
+    return m_d3d11Device;
+}
+#endif
+void VideoRenderer::onAudioPtsUpdated(int64_t ptsUs)
+{
+    m_startTimeUs = getCurrentTimeUs() - ptsUs;
+}
+void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
+{
+    if (!m_running) {
+        m_renderFrame.reset();
+        createEmptyPipeline();
+    } else {
+        if (!m_renderFrame) {
+            m_renderFrame = getNextFrame();
+        }
+        if (!m_renderFrame) {
+            return;
+        }
+        if (!shouldRenderNewFrame()) {
+            return;
+        }
+        if (m_renderFrame->serial() < m_serial) {
+            m_renderFrame.reset();
+            return;
+        }
+        if (m_renderFrame->width() != m_width ||
+            m_renderFrame->height() != m_height ||
+            m_renderFrame->pixelFormat() != m_pixelFormat) {
+            m_width = m_renderFrame->width();
+            m_height = m_renderFrame->height();
+            m_pixelFormat = m_renderFrame->pixelFormat();
+            if (!recreatePipeline()) {
+                NEAPU_LOGE("Failed to recreate pipeline for new video frame");
+                return;
+            }
+        }
+    }
+
+
     const QSize pixelSize = renderTarget()->pixelSize();
     auto rub = m_rhi->nextResourceUpdateBatch();
 
-    if (m_running) {
-        if (m_nextFrame) {
-            bool needRecreatePipeline =
-                !m_currentFrame || (m_currentFrame->width() != m_nextFrame->width()) ||
-                (m_currentFrame->height() != m_nextFrame->height()) ||
-                (m_currentFrame->pixelFormat() != m_nextFrame->pixelFormat());
-            m_currentFrame = std::move(m_nextFrame);
-            m_nextFrame.reset();
-            if (needRecreatePipeline) {
-                if (!recreatePipeline()) {
-                    NEAPU_LOGE("Failed to recreate pipeline for new video frame");
-                }
-            }
-        } else {
-            NEAPU_LOGE("No video frame available for rendering");
-            return;
-        }
-
-        updateTextures(rub);
-        updateVertexUniformBuffer(rub, pixelSize);
-
-        getNextFrame();
-    } else {
-        createEmptyPipeline();
-    }
+    updateTextures(rub);
+    updateVertexUniformBuffer(rub, pixelSize);
+    m_renderFrame.reset();
 
     cb->beginPass(renderTarget(), QColor(0, 0, 0, 255), {1.0f, 0}, rub);
 
@@ -166,52 +231,6 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
     cb->setVertexInput(0, 1, vertexInput);
     cb->draw(4);
     cb->endPass();
-}
-void VideoRenderer::start(double fps)
-{
-    NEAPU_FUNC_TRACE;
-    m_fps = fps;
-    m_running = true;
-    m_startTimeUs = getCurrentTimeUs();
-    getNextFrame();
-}
-void VideoRenderer::stop()
-{
-    NEAPU_FUNC_TRACE;
-    m_running = false;
-    m_currentFrame.reset();
-    m_nextFrame.reset();
-    m_startTimeUs = 0;
-    m_serial = 0;
-    update();
-}
-void VideoRenderer::seek(int serial)
-{
-    NEAPU_LOGD("Seeking video renderer to serial {}", serial);
-    m_seeking = true;
-    m_serial = serial;
-}
-// void VideoRenderer::onFrameReady(media::FramePtr&& newFrame)
-// {
-//     if (!newFrame) {
-//         NEAPU_LOGE("Received null video frame");
-//         return;
-//     }
-//     {
-//         std::unique_lock<std::mutex> lock(m_frameMutex);
-//         m_nextFrame = std::move(newFrame);
-//     }
-//     update();
-// }
-#ifdef _WIN32
-ID3D11Device* VideoRenderer::getD3D11Device()
-{
-    return m_d3d11Device;
-}
-#endif
-void VideoRenderer::onAudioPtsUpdated(int64_t ptsUs)
-{
-    m_startTimeUs = getCurrentTimeUs() - ptsUs;
 }
 bool VideoRenderer::recreatePipeline()
 {
@@ -229,7 +248,7 @@ bool VideoRenderer::recreatePipeline()
 bool VideoRenderer::createEmptyPipeline()
 {
     NEAPU_FUNC_TRACE;
-    m_currentFrame.reset();
+    m_renderFrame.reset();
     m_srb.reset(m_rhi->newShaderResourceBindings());
     m_srb->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(3, QRhiShaderResourceBinding::VertexStage, m_vsUBuffer.get()),
@@ -281,7 +300,7 @@ bool VideoRenderer::createPipeline()
 
 bool VideoRenderer::recreateTextures()
 {
-    if (m_currentFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
+    if (m_renderFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
         return createD3D11Texture();
     } else {
         return createYUVTextures();
@@ -290,8 +309,8 @@ bool VideoRenderer::recreateTextures()
 bool VideoRenderer::createYUVTextures()
 {
     NEAPU_FUNC_TRACE;
-    int width = m_currentFrame->width();
-    int height = m_currentFrame->height();
+    int width = m_renderFrame->width();
+    int height = m_renderFrame->height();
     m_textures[0].reset(m_rhi->newTexture(QRhiTexture::R8,
         QSize(width, height), 1, QRhiTexture::Flags()));
     m_textures[1].reset(m_rhi->newTexture(QRhiTexture::R8,
@@ -328,7 +347,7 @@ bool VideoRenderer::createD3D11Texture()
 {
     NEAPU_FUNC_TRACE;
 #ifdef _WIN32
-    if (!m_currentFrame || m_currentFrame->pixelFormat() != Frame::PixelFormat::D3D11Texture2D) {
+    if (!m_renderFrame || m_renderFrame->pixelFormat() != Frame::PixelFormat::D3D11Texture2D) {
         NEAPU_LOGE("Current frame is not D3D11 texture");
         return false;
     }
@@ -338,7 +357,7 @@ bool VideoRenderer::createD3D11Texture()
         return false;
     }
 
-    auto* srcTexture = m_currentFrame->d3d11Texture2D();
+    auto* srcTexture = m_renderFrame->d3d11Texture2D();
     if (!srcTexture) {
         NEAPU_LOGE("D3D11 texture is null in current frame");
         return false;
@@ -354,8 +373,8 @@ bool VideoRenderer::createD3D11Texture()
     m_nativeTexture.Reset();
     D3D11_TEXTURE2D_DESC desc = {};
     // 这里使用视频帧的尺寸创建纹理，因为解码出来的纹理可能是对齐填充过的，会比实际视频尺寸大
-    desc.Width = m_currentFrame->width();
-    desc.Height = m_currentFrame->height();
+    desc.Width = m_renderFrame->width();
+    desc.Height = m_renderFrame->height();
     desc.MipLevels = 1;
     desc.ArraySize = 1;
     desc.Format = srcDesc.Format;
@@ -377,8 +396,8 @@ bool VideoRenderer::createD3D11Texture()
     nativeTex.object = reinterpret_cast<quint64>(m_nativeTexture.Get());
     nativeTex.layout = 0; // d3d11不需要
 
-    auto width = m_currentFrame->width();
-    auto height = m_currentFrame->height();
+    auto width = m_renderFrame->width();
+    auto height = m_renderFrame->height();
     if (desc.Format == DXGI_FORMAT_NV12) {
         m_textures[0].reset(m_rhi->newTexture(QRhiTexture::R8,
             QSize(width, height), 1, QRhiTexture::Flags()));
@@ -425,13 +444,14 @@ bool VideoRenderer::createD3D11Texture()
 }
 void VideoRenderer::updateTextures(QRhiResourceUpdateBatch* rub)
 {
-    if (!m_currentFrame) {
-        NEAPU_LOGE("Current frame is null when updating textures");
+    if (!m_renderFrame) {
+        NEAPU_LOGW("Current frame is null when updating textures");
         return;
     }
-    NEAPU_LOGD("Render pts={}us", m_currentFrame->ptsUs());
-    emit playingPts(m_currentFrame->ptsUs());
-    if (m_currentFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
+    // NEAPU_LOGD("Render pts={}us", m_renderFrame->ptsUs());
+    m_currentPtsUs = m_renderFrame->ptsUs();
+    emit playingPts(m_renderFrame->ptsUs());
+    if (m_renderFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
         updateD3D11Texture();
     } else {
         updateYUVTextures(rub);
@@ -440,23 +460,23 @@ void VideoRenderer::updateTextures(QRhiResourceUpdateBatch* rub)
 
 void VideoRenderer::updateYUVTextures(QRhiResourceUpdateBatch* rub)
 {
-    if (!m_currentFrame) {
+    if (!m_renderFrame) {
         NEAPU_LOGE("Current frame is null when updating YUV textures");
         return;
     }
 
-    if (m_currentFrame->pixelFormat() != Frame::PixelFormat::YUV420P) {
+    if (m_renderFrame->pixelFormat() != Frame::PixelFormat::YUV420P) {
         NEAPU_LOGE("Current frame is not YUV420P when updating YUV textures");
         return;
     }
 
     // 判断是否有填充，如果有填充需要逐行复制，如果没有填充，可以一次性上传
     bool needPerLineCopy = false;
-    int width = m_currentFrame->width();
-    int height = m_currentFrame->height();
-    int yLineSize = m_currentFrame->yLineSize();
-    int uLineSize = m_currentFrame->uLineSize();
-    int vLineSize = m_currentFrame->vLineSize();
+    int width = m_renderFrame->width();
+    int height = m_renderFrame->height();
+    int yLineSize = m_renderFrame->yLineSize();
+    int uLineSize = m_renderFrame->uLineSize();
+    int vLineSize = m_renderFrame->vLineSize();
     if (yLineSize != width || uLineSize != (width + 1) / 2 || vLineSize != (width + 1) / 2) {
         needPerLineCopy = true;
     }
@@ -472,23 +492,23 @@ void VideoRenderer::updateYUVTextures(QRhiResourceUpdateBatch* rub)
         // 复制Y平面
         for (int row = 0; row < height; ++row) {
             std::memcpy(yPtr + row * width,
-                m_currentFrame->yData() + row * yLineSize,
+                m_renderFrame->yData() + row * yLineSize,
                 width);
         }
         // 复制U平面和V平面
         for (int row = 0; row < (height + 1) / 2; ++row) {
             std::memcpy(uPtr + row * ((width + 1) / 2),
-                m_currentFrame->uData() + row * uLineSize,
+                m_renderFrame->uData() + row * uLineSize,
                 (width + 1) / 2);
             std::memcpy(vPtr + row * ((width + 1) / 2),
-                m_currentFrame->vData() + row * vLineSize,
+                m_renderFrame->vData() + row * vLineSize,
                 (width + 1) / 2);
         }
     } else {
         // 一次性上传
-        data[0] = QByteArray(reinterpret_cast<const char*>(m_currentFrame->yData()), width * height);
-        data[1] = QByteArray(reinterpret_cast<const char*>(m_currentFrame->uData()), ((width + 1) / 2) * ((height + 1) / 2));
-        data[2] = QByteArray(reinterpret_cast<const char*>(m_currentFrame->vData()), ((width + 1) / 2) * ((height + 1) / 2));
+        data[0] = QByteArray(reinterpret_cast<const char*>(m_renderFrame->yData()), width * height);
+        data[1] = QByteArray(reinterpret_cast<const char*>(m_renderFrame->uData()), ((width + 1) / 2) * ((height + 1) / 2));
+        data[2] = QByteArray(reinterpret_cast<const char*>(m_renderFrame->vData()), ((width + 1) / 2) * ((height + 1) / 2));
     }
 
     for (int i = 0; i < 3; i++) {
@@ -511,11 +531,11 @@ void VideoRenderer::updateD3D11Texture()
     srcBox.left = 0;
     srcBox.top = 0;
     srcBox.front = 0;
-    srcBox.right = m_currentFrame->width();
-    srcBox.bottom = m_currentFrame->height();
+    srcBox.right = m_renderFrame->width();
+    srcBox.bottom = m_renderFrame->height();
     srcBox.back = 1;
 
-    auto* srcTexture = m_currentFrame->d3d11Texture2D();
+    auto* srcTexture = m_renderFrame->d3d11Texture2D();
     if (!srcTexture) {
         NEAPU_LOGE("D3D11 texture is null in current frame");
         return;
@@ -525,7 +545,7 @@ void VideoRenderer::updateD3D11Texture()
         m_nativeTexture.Get(),
         0, 0, 0, 0,
         srcTexture,
-        m_currentFrame->subresourceIndex(),
+        m_renderFrame->subresourceIndex(),
         &srcBox);
 #else
     NEAPU_LOGE("D3D11 texture update called on non-Windows platform");
@@ -533,7 +553,7 @@ void VideoRenderer::updateD3D11Texture()
 }
 void VideoRenderer::updateVertexUniformBuffer(QRhiResourceUpdateBatch* rub, QSize renderSize)
 {
-    if (!m_currentFrame) {
+    if (!m_renderFrame) {
         NEAPU_LOGW("Current frame is null when updating vertex uniform buffer");
         return;
     }
@@ -544,8 +564,8 @@ void VideoRenderer::updateVertexUniformBuffer(QRhiResourceUpdateBatch* rub, QSiz
     float scaleX = 1.0f;
     float scaleY = 1.0f;
 
-    int videoW = m_currentFrame->width();
-    int videoH = m_currentFrame->height();
+    int videoW = m_renderFrame->width();
+    int videoH = m_renderFrame->height();
     if (m_lastVideoSize.width() == videoW &&
         m_lastVideoSize.height() == videoH &&
         m_lastRenderSize == renderSize) {
@@ -581,18 +601,18 @@ void VideoRenderer::updateVertexUniformBuffer(QRhiResourceUpdateBatch* rub, QSiz
 }
 QString VideoRenderer::getFragmentShaderName()
 {
-    if (!m_currentFrame) {
+    if (!m_renderFrame) {
         return ":/shaders/none.frag.qsb";
     }
 
     QString name;
     using enum Frame::PixelFormat;
-    if (m_currentFrame->pixelFormat() == YUV420P) {
+    if (m_renderFrame->pixelFormat() == YUV420P) {
         name = "yuv420p";
-    } else if (m_currentFrame->pixelFormat() == D3D11Texture2D) {
+    } else if (m_renderFrame->pixelFormat() == D3D11Texture2D) {
 #ifdef _WIN32
         D3D11_TEXTURE2D_DESC desc;
-        auto* texture = m_currentFrame->d3d11Texture2D();
+        auto* texture = m_renderFrame->d3d11Texture2D();
         if (!texture) {
             NEAPU_LOGE("D3D11 texture is null in current frame");
             return ":/shaders/none.frag.qsb";
@@ -613,13 +633,13 @@ QString VideoRenderer::getFragmentShaderName()
         return ":/shaders/none.frag.qsb";
     }
 
-    if (m_currentFrame->colorRange() == Frame::ColorRange::Full) {
+    if (m_renderFrame->colorRange() == Frame::ColorRange::Full) {
         name += "_full";
     } else {
         name += "_limited";
     }
 
-    if (m_currentFrame->colorSpace() == Frame::ColorSpace::BT709) {
+    if (m_renderFrame->colorSpace() == Frame::ColorSpace::BT709) {
         name += "_bt709";
     } else {
         name += "_bt601";
@@ -627,68 +647,100 @@ QString VideoRenderer::getFragmentShaderName()
 
     return QString(":/shaders/%1.frag.qsb").arg(name);
 }
-void VideoRenderer::getNextFrame()
+media::FramePtr VideoRenderer::getNextFrame()
 {
-    QThreadPool::globalInstance()->start([this]() {
-        while (m_running) {
-            auto nextFrame = media::Player::instance().getVideoFrame();
-            if (!nextFrame) {
-                // 正常情况下不应出现
-                NEAPU_LOGE("Received null video frame");
-                continue;
-            }
-            if (nextFrame->type() == Frame::FrameType::EndOfStream) {
-                // 收到结束帧
-                NEAPU_LOGI("Received end-of-file video frame");
-                emit eof();
-                return;
-            }
-
-
-            if (nextFrame->serial() < m_serial) {
-                // 丢弃过期帧
-                NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
-                    nextFrame->serial(), m_serial.load());
-                continue;
-            }
-            if (nextFrame->type() == Frame::FrameType::Flush) {
-                m_startTimeUs = 0;
-                m_seeking = false;
-                NEAPU_LOGD("Received flush video frame, resetting start time");
-                continue;
-            }
-            if (m_startTimeUs == 0) {
-                // 这个值为0代表是刚seek过，需要重新计算startTimeUs
-                m_startTimeUs = getCurrentTimeUs() - nextFrame->ptsUs();
-                m_nextFrame = std::move(nextFrame);
-                update();
-                return;
-            }
-            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-
-            // 如果pts早于预播放时间，并且超过了阈值，则丢弃
-            auto thresholdUs = static_cast<int64_t>(1e6 / m_fps);
-            if (nextFrame->ptsUs() < expectedPlayTimeUs - thresholdUs) {
-                NEAPU_LOGD("Discarding late video frame with PTS {}us, expected play time {}us",
-                    nextFrame->ptsUs(), expectedPlayTimeUs);
-                continue;
-            }
-            // 如果pts晚与预播放时间，说明还没到播放时间，需要等待
-            int64_t waitTimeUs = nextFrame->ptsUs() - expectedPlayTimeUs;
-            if (waitTimeUs > 1e6) {
-                // 等待超过1秒，不正常
-                NEAPU_LOGE("Unrealistic wait time for video frame: {}us", waitTimeUs);
-                waitTimeUs = 1e6;
-            }
-            if (waitTimeUs > 0) {
-                // NEAPU_LOGD("Waiting {}us for video frame with PTS {}us", waitTimeUs, nextFrame->ptsUs());
-                QThread::usleep(static_cast<unsigned long>(waitTimeUs));
-            }
-            m_nextFrame = std::move(nextFrame);
-            update();
-            return;
+    // QThreadPool::globalInstance()->start([this]() {
+        // while (m_running) {
+        //     auto nextFrame = media::Player::instance().getVideoFrame();
+        //     if (!nextFrame) {
+        //         return;
+        //     }
+        //     if (nextFrame->type() == Frame::FrameType::EndOfStream) {
+        //         // 收到结束帧
+        //         NEAPU_LOGI("Received end-of-file video frame");
+        //         emit eof();
+        //         return;
+        //     }
+        //
+        //     if (nextFrame->serial() < m_serial) {
+        //         // 丢弃过期帧
+        //         NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
+        //             nextFrame->serial(), m_serial.load());
+        //         continue;
+        //     }
+        //     if (nextFrame->type() == Frame::FrameType::Flush) {
+        //         m_startTimeUs = 0;
+        //         m_seeking = false;
+        //         NEAPU_LOGD("Received flush video frame, resetting start time");
+        //         continue;
+        //     }
+        //     if (m_startTimeUs == 0) {
+        //         // 这个值为0代表是刚seek过，需要重新计算startTimeUs
+        //         m_startTimeUs = getCurrentTimeUs() - nextFrame->ptsUs();
+        //         m_nextFrame = std::move(nextFrame);
+        //         update();
+        //         return;
+        //     }
+        //     auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+        //
+        //     // 如果pts早于预播放时间，并且超过了阈值，则丢弃
+        //     auto thresholdUs = static_cast<int64_t>(1e6 / m_fps);
+        //     if (nextFrame->ptsUs() < expectedPlayTimeUs - thresholdUs) {
+        //         NEAPU_LOGD("Discarding late video frame with PTS {}us, expected play time {}us",
+        //             nextFrame->ptsUs(), expectedPlayTimeUs);
+        //         continue;
+        //     }
+        //     // 如果pts晚与预播放时间，说明还没到播放时间，需要等待
+        //     int64_t waitTimeUs = nextFrame->ptsUs() - expectedPlayTimeUs;
+        //     if (waitTimeUs > 1000000) {
+        //         // 等待超过1秒，不正常
+        //         NEAPU_LOGE("Unrealistic wait time for video frame: {}us", waitTimeUs);
+        //         waitTimeUs = 1000000;
+        //     }
+        //     if (waitTimeUs > 0) {
+        //         // NEAPU_LOGD("Waiting {}us for video frame with PTS {}us", waitTimeUs, nextFrame->ptsUs());
+        //         QThread::usleep(static_cast<unsigned long>(waitTimeUs));
+        //     }
+        //     m_nextFrame = std::move(nextFrame);
+        //     update();
+        //     return;
+        // }
+    // });
+    while (m_running) {
+        auto nextFrame = media::Player::instance().getVideoFrame();
+        if (!nextFrame) {
+            return nullptr;
         }
-    });
+        if (nextFrame->type() == Frame::FrameType::EndOfStream) {
+            // 收到结束帧
+            NEAPU_LOGI("Received end-of-file video frame");
+            emit eof();
+            return nullptr;
+        }
+        if (nextFrame->serial() < m_serial) {
+            // 丢弃过期帧
+            NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
+                nextFrame->serial(), m_serial.load());
+            continue;
+        }
+        if (nextFrame->type() == Frame::FrameType::Flush) {
+            m_startTimeUs = 0;
+            m_seeking = false;
+            NEAPU_LOGD("Received flush video frame, resetting start time");
+            continue;
+        }
+        return nextFrame;
+    }
+    return nullptr;
+}
+bool VideoRenderer::shouldRenderNewFrame()
+{
+    if (!m_renderFrame) {
+        return false;
+    }
+
+    auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+    return m_renderFrame->ptsUs() <= expectedPlayTimeUs;
 }
 
 } // namespace view

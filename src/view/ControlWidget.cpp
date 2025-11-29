@@ -56,13 +56,15 @@ void ControlWidget::onPlayingTimeChanged(double seconds)
 void ControlWidget::onPlayStateChanged(PlayerController::State state)
 {
     if (state == PlayerController::State::Playing) {
-        // m_playPauseButton->setIcon(QIcon(":/svg/pause.svg"));
+        m_playPauseButton->setIcon(QIcon(":/svg/pause.svg"));
         QMutexLocker locker(&m_mutex);
         m_timelineSlider->setEnabled(true);
     } else if (state == PlayerController::State::Pause) {
-        // m_playPauseButton->setIcon(QIcon(":/svg/play.svg"));
+        m_playPauseButton->setIcon(QIcon(":/svg/play.svg"));
+        m_timelineSlider->setEnabled(false);
     } else if (state == PlayerController::State::Stopped) {
-        // m_playPauseButton->setIcon(QIcon(":/svg/play.svg"));
+        NEAPU_LOGD("ControlWidget::onPlayStateChanged: Stopped");
+        m_playPauseButton->setIcon(QIcon(":/svg/play.svg"));
         QMutexLocker locker(&m_mutex);
         m_timelineSlider->setValue(0);
         m_currentTimeLabel->setText("00:00:00");
@@ -71,39 +73,22 @@ void ControlWidget::onPlayStateChanged(PlayerController::State state)
         m_timelineSlider->setEnabled(false);
     }
 }
-
-// void ControlWidget::setDuration(int64_t durationUs)
-// {
-//     // 转换为秒
-//     m_durationSeconds = static_cast<int>(durationUs / 1000000);
-//
-//     auto hours = m_durationSeconds / 3600;
-//     auto minutes = (m_durationSeconds % 3600) / 60;
-//     auto seconds = m_durationSeconds % 60;
-//     m_totalTimeLabel->setText(QString("%1:%2:%3")
-//                                   .arg(hours, 2, 10, QChar('0'))
-//                                   .arg(minutes, 2, 10, QChar('0'))
-//                                   .arg(seconds, 2, 10, QChar('0')));
-//     m_timelineSlider->setMaximum(m_durationSeconds);
-//     NEAPU_LOGI("Set duration: {} seconds", m_durationSeconds);
-// }
-//
-// void ControlWidget::setCurrentPts(int64_t currentPtsUs)
-// {
-//     m_currentPtsSeconds = static_cast<int>(currentPtsUs / 1000000);
-//
-//     auto hours = m_currentPtsSeconds / 3600;
-//     auto minutes = (m_currentPtsSeconds % 3600) / 60;
-//     auto seconds = m_currentPtsSeconds % 60;
-//     m_currentTimeLabel->setText(QString("%1:%2:%3")
-//                                     .arg(hours, 2, 10, QChar('0'))
-//                                     .arg(minutes, 2, 10, QChar('0'))
-//                                     .arg(seconds, 2, 10, QChar('0')));
-//     QMutexLocker locker(&m_mutex);
-//     if (!m_timelineSliderDragging) {
-//         m_timelineSlider->setValue(m_currentPtsSeconds);
-//     }
-// }
+void ControlWidget::onPlayPauseButtonClicked()
+{
+    m_playerController->onPauseOrResume();
+}
+void ControlWidget::onFastForwardButtonClicked()
+{
+    m_playerController->fastForward();
+}
+void ControlWidget::onFastRewindButtonClicked()
+{
+    m_playerController->fastRewind();
+}
+void ControlWidget::onStopButtonClicked()
+{
+    m_playerController->onClose();
+}
 
 void ControlWidget::createTimelineLayout(QBoxLayout* parentLayout)
 {
@@ -138,36 +123,40 @@ void ControlWidget::createControlLayout(QBoxLayout* parentLayout)
     m_playPauseButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
     m_playPauseButton->setIconSize({ICON_SIZE, ICON_SIZE});
     buttonsLayout->addWidget(m_playPauseButton);
+    connect(m_playPauseButton, &QPushButton::clicked, this, &ControlWidget::onPlayPauseButtonClicked);
 
     m_fastRewindButton = new QPushButton("", this);
     m_fastRewindButton->setIcon(QIcon(":/svg/fast-rewind.svg"));
     m_fastRewindButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
     m_fastRewindButton->setIconSize({ICON_SIZE, ICON_SIZE});
     buttonsLayout->addWidget(m_fastRewindButton);
+    connect(m_fastRewindButton, &QPushButton::clicked, this, &ControlWidget::onFastRewindButtonClicked);
 
     m_stopButton = new QPushButton("", this);
     m_stopButton->setIcon(QIcon(":/svg/stop.svg"));
     m_stopButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
     m_stopButton->setIconSize({ICON_SIZE, ICON_SIZE});
     buttonsLayout->addWidget(m_stopButton);
+    connect(m_stopButton, &QPushButton::clicked, this, &ControlWidget::onStopButtonClicked);
 
     m_fastForwardButton = new QPushButton("", this);
     m_fastForwardButton->setIcon(QIcon(":/svg/fast-forward.svg"));
     m_fastForwardButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
     m_fastForwardButton->setIconSize({ICON_SIZE, ICON_SIZE});
     buttonsLayout->addWidget(m_fastForwardButton);
+    connect(m_fastForwardButton, &QPushButton::clicked, this, &ControlWidget::onFastForwardButtonClicked);
 
-    m_repeatButton = new QPushButton("", this);
-    m_repeatButton->setIcon(QIcon(":/svg/repeat.svg"));
-    m_repeatButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
-    m_repeatButton->setIconSize({ICON_SIZE, ICON_SIZE});
-    buttonsLayout->addWidget(m_repeatButton);
-
-    m_shuffleButton = new QPushButton("", this);
-    m_shuffleButton->setIcon(QIcon(":/svg/shuffle.svg"));
-    m_shuffleButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
-    m_shuffleButton->setIconSize({ICON_SIZE, ICON_SIZE});
-    buttonsLayout->addWidget(m_shuffleButton);
+    // m_repeatButton = new QPushButton("", this);
+    // m_repeatButton->setIcon(QIcon(":/svg/repeat.svg"));
+    // m_repeatButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
+    // m_repeatButton->setIconSize({ICON_SIZE, ICON_SIZE});
+    // buttonsLayout->addWidget(m_repeatButton);
+    //
+    // m_shuffleButton = new QPushButton("", this);
+    // m_shuffleButton->setIcon(QIcon(":/svg/shuffle.svg"));
+    // m_shuffleButton->setFixedSize({BUTTON_SIZE, BUTTON_SIZE});
+    // m_shuffleButton->setIconSize({ICON_SIZE, ICON_SIZE});
+    // buttonsLayout->addWidget(m_shuffleButton);
 
     buttonsLayout->addStretch();
 

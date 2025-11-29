@@ -18,7 +18,7 @@ AudioRenderer::AudioRenderer(QObject* parent)
 {
 
 }
-bool AudioRenderer::start(int sampleRate, int channels)
+bool AudioRenderer::start(int sampleRate, int channels, int64_t startTimeUs)
 {
     NEAPU_FUNC_TRACE;
     NEAPU_LOGI("Starting audio renderer: sampleRate={}, channels={}", sampleRate, channels);
@@ -56,7 +56,7 @@ bool AudioRenderer::start(int sampleRate, int channels)
         m_device = nullptr;
         return false;
     }
-    m_startTimeUs = getCurrentTimeUs();
+    m_startTimeUs = startTimeUs;
     m_running = true;
 
     return true;
@@ -81,6 +81,10 @@ void AudioRenderer::seek(int serial)
 {
     m_seeking = true;
     m_serial = serial;
+}
+int64_t AudioRenderer::currentPtsUs() const
+{
+    return m_currentPtsUs;
 }
 void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount)
 {
@@ -124,7 +128,6 @@ void AudioRenderer::updateCurrentData(int64_t thresholdUs)
             m_nextData = media::Player::instance().getAudioFrame();
         }
         if (!m_nextData) {
-            NEAPU_LOGE("Received null audio frame");
             return;
         }
         if (m_nextData->type() == media::Frame::FrameType::EndOfStream) {
@@ -162,6 +165,7 @@ void AudioRenderer::updateCurrentData(int64_t thresholdUs)
         m_offset = 0;
         // 反向校准startTimeUs
         m_startTimeUs = getCurrentTimeUs() - m_currentData->ptsUs();
+        m_currentPtsUs = m_currentData->ptsUs();
         emit playingPts(m_currentData->ptsUs());
         return;
     }

@@ -16,12 +16,14 @@ public:
     explicit AudioRenderer(QObject* parent = nullptr);
     ~AudioRenderer() override = default;
 
-    bool start(int sampleRate, int channels);
+    bool start(int sampleRate, int channels, int64_t startTimeUs);
     void stop();
 
     void seek(int serial);
 
     bool seeking() const { return m_seeking.load(); }
+
+    int64_t currentPtsUs() const;
 
 signals:
     void playingStateChanged(bool playing);
@@ -46,6 +48,8 @@ private:
     std::atomic_int m_serial{0};
     std::atomic_bool m_seeking{false};
     std::atomic_bool m_running{false};
+
+    std::atomic<int64_t> m_currentPtsUs{0};
 };
 
 } // namespace view

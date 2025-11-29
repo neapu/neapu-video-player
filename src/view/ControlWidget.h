@@ -27,6 +27,11 @@ public slots:
     void onPlayingTimeChanged(double seconds);
     void onPlayStateChanged(PlayerController::State state);
 
+    void onPlayPauseButtonClicked();
+    void onFastForwardButtonClicked();
+    void onFastRewindButtonClicked();
+    void onStopButtonClicked();
+
 private:
     void createTimelineLayout(QBoxLayout* parentLayout);
     void createControlLayout(QBoxLayout* parentLayout);

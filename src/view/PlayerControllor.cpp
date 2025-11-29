@@ -45,21 +45,23 @@ void PlayerController::onOpen()
         QMessageBox::critical(nullptr, tr("Error"), tr("Failed to open media file."));
         return;
     }
+    auto currentTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (Player::instance().hasVideo()) {
         m_videoEof = false;
-        m_videoRenderer->start(Player::instance().fps());
+        m_videoRenderer->start(Player::instance().fps(), currentTimeUs);
     } else {
         m_videoEof = true;
     }
     if (Player::instance().hasAudio()) {
         m_audioEof = false;
-        m_audioRenderer->start(Player::instance().sampleRate(), Player::instance().channelCount());
+        m_audioRenderer->start(Player::instance().sampleRate(), Player::instance().channelCount(), currentTimeUs);
     } else {
         m_audioEof = true;
     }
     m_state = State::Playing;
     emit stateChanged(m_state);
     emit durationChanged(Player::instance().durationSeconds());
+    emit fileNameChanged(QFileInfo(filePath).fileName());
 }
 void PlayerController::onClose()
 {
@@ -69,9 +71,31 @@ void PlayerController::onClose()
     m_serial = 0;
     m_state = State::Stopped;
     emit stateChanged(m_state);
+    emit fileNameChanged(QString());
+}
+void PlayerController::onPauseOrResume()
+{
+    if (m_state == State::Playing) {
+        m_audioRenderer->stop();
+        m_videoRenderer->pause();
+        m_state = State::Pause;
+        emit stateChanged(m_state);
+    } else if (m_state == State::Pause) {
+        if (Player::instance().hasVideo()) {
+            m_videoRenderer->start(Player::instance().fps(), 0);
+        }
+        if (Player::instance().hasAudio()) {
+            m_audioRenderer->start(Player::instance().sampleRate(), Player::instance().channelCount(), 0);
+        }
+        m_state = State::Playing;
+        emit stateChanged(m_state);
+    }
 }
 void PlayerController::seek(double seconds)
 {
+    if (m_state != State::Playing) {
+        return;
+    }
     if (m_videoRenderer->seeking() || m_audioRenderer->seeking()) {
         return;
     }
@@ -79,6 +103,42 @@ void PlayerController::seek(double seconds)
     m_videoRenderer->seek(m_serial);
     m_audioRenderer->seek(m_serial);
     Player::instance().seek(seconds, m_serial);
+}
+void PlayerController::fastForward()
+{
+    if (m_state != State::Playing) {
+        return;
+    }
+    double currentPos = 0.0;
+    if (Player::instance().hasAudio()) { // 优先使用音频时间戳
+        currentPos = static_cast<double>(m_audioRenderer->currentPtsUs()) / 1e6;
+    } else if (Player::instance().hasVideo()) {
+        currentPos = static_cast<double>(m_videoRenderer->currentPtsUs()) / 1e6;
+    }
+    double newPos = currentPos + 15.0; // 快进15秒
+    if (newPos > Player::instance().durationSeconds()) {
+        newPos = Player::instance().durationSeconds();
+    } else if (newPos < 0.0) {
+        newPos = 0.0;
+    }
+    seek(newPos);
+}
+void PlayerController::fastRewind()
+{
+    if (m_state != State::Playing) {
+        return;
+    }
+    double currentPos = 0.0;
+    if (Player::instance().hasAudio()) { // 优先使用音频时间戳
+        currentPos = static_cast<double>(m_audioRenderer->currentPtsUs()) / 1e6;
+    } else if (Player::instance().hasVideo()) {
+        currentPos = static_cast<double>(m_videoRenderer->currentPtsUs()) / 1e6;
+    }
+    double newPos = currentPos - 15.0; // 快退15秒
+    if (newPos < 0.0) {
+        newPos = 0.0;
+    }
+    seek(newPos);
 }
 void PlayerController::checkEof()
 {
@@ -88,6 +148,7 @@ void PlayerController::checkEof()
         m_serial = 0;
         m_state = State::Stopped;
         emit stateChanged(m_state);
+        emit fileNameChanged(QString());
     }
 }
 void PlayerController::onAudioEof()

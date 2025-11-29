@@ -24,6 +24,14 @@ MainWindow::MainWindow()
     createMenus();
 
     createLayout();
+
+    connect(m_playerController, &PlayerController::fileNameChanged, this, [this](const QString& fileName) {
+        if (fileName.isEmpty()) {
+            setWindowTitle("Neapu Video Player");
+        } else {
+            setWindowTitle(QString("Neapu Video Player - %1").arg(fileName));
+        }
+    });
 }
 MainWindow::~MainWindow()
 {

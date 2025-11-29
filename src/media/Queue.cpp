@@ -129,13 +129,6 @@ void FrameQueue::push(FramePtr&& frame)
 FramePtr FrameQueue::pop()
 {
     std::unique_lock<std::mutex> lock(m_mutex);
-    size_t token = m_clearToken;
-    m_condVar.wait(lock, [&]() {
-        return m_clearToken != token || !m_queue.empty();
-    });
-    if (m_clearToken != token) {
-        return nullptr;
-    }
     if (m_queue.empty()) {
         return nullptr;
     }

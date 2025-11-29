@@ -22,12 +22,17 @@ public:
 
     void onOpen();
     void onClose();
+    void onPauseOrResume();
 
     void seek(double seconds);
+
+    void fastForward();
+    void fastRewind();
 
     State state() const { return m_state; }
 
 signals:
+    void fileNameChanged(const QString& fileName);
     void durationChanged(double seconds);
     void positionChanged(double seconds);
     void stateChanged(State state);
