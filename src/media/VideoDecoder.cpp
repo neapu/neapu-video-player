@@ -33,7 +33,7 @@ VideoDecoder::VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallb
     , m_d3d11Device(d3d11Device)
 #else
 VideoDecoder::VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod)
-    : DecoderBase(stream, packetCallback)
+    : DecoderBase(stream, packetCallback, CodecType::Video)
     , m_hwaccelMethod(hwaccelMethod)
 #endif
 {

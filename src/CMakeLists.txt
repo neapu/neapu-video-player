@@ -1,6 +1,6 @@
 set(EXE_NAME "NeapuVideoPlayer")
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Widgets ShaderTools)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Widgets ShaderTools Concurrent)
 
 qt_standard_project_setup()
 

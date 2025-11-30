@@ -20,6 +20,30 @@
       "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}/lib/cmake",
       "FFMPEG_DIR": "$env{FFMPEG_DIR}"
     }
+  }, {
+    "name": "Linux-Debug",
+    "displayName": "Linux GCC Debug",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/${presetName}",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_C_COMPILER": "gcc",
+      "CMAKE_CXX_COMPILER": "g++",
+      "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}/lib/cmake",
+      "FFMPEG_DIR": "$env{FFMPEG_DIR}"
+    }
+  }, {
+    "name": "Linux-Release",
+    "displayName": "Linux GCC Release",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/${presetName}",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_C_COMPILER": "gcc",
+      "CMAKE_CXX_COMPILER": "g++",
+      "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}/lib/cmake",
+      "FFMPEG_DIR": "$env{FFMPEG_DIR}"
+    }
   }],
   "buildPresets": [{
     "name": "Win64-MSVC-Debug",
@@ -31,5 +55,13 @@
     "configurePreset": "Win64-MSVC-Release",
     "displayName": "Build Win64 MSVC Release",
     "configuration": "Release"
+  }, {
+    "name": "Linux-Debug",
+    "configurePreset": "Linux-Debug",
+    "displayName": "Build Linux GCC Debug"
+  }, {
+    "name": "Linux-Release",
+    "configurePreset": "Linux-Release",
+    "displayName": "Build Linux GCC Release"
   }]
 }

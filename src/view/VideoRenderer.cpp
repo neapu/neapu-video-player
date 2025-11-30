@@ -80,6 +80,8 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
         NEAPU_LOGW("QRhi backend is not D3D11, current backend: {}", m_rhi->backendName());
     }
 #endif
+    auto backendName = m_rhi->backendName();
+    NEAPU_LOGI("QRhi backend: {}", backendName);
 
     // 创建顶点缓冲区
     m_vertexBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Immutable,
