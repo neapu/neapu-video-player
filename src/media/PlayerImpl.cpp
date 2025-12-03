@@ -30,6 +30,7 @@ FramePtr PlayerImpl::getVideoFrame()
         }
 
         if (m_nextVideoFrame->type() == Frame::FrameType::EndOfStream) {
+            NEAPU_LOGI("Video reached end of stream");
             m_videoEof = true;
             if (m_param.onPlayFinished && (m_audioEof.load() || !m_audioDecoder)) {
                 m_param.onPlayFinished();
@@ -96,6 +97,7 @@ FramePtr PlayerImpl::getAudioFrame()
             return nullptr;
         }
         if (m_nextAudioFrame->type() == Frame::FrameType::EndOfStream) {
+            NEAPU_LOGI("Audio reached end of stream");
             m_audioEof = true;
             if (m_param.onPlayFinished && (m_videoEof.load() || !m_videoDecoder)) {
                 m_param.onPlayFinished();

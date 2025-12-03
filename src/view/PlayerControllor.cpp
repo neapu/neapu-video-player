@@ -34,7 +34,10 @@ void PlayerController::onOpen()
         emit positionChanged(static_cast<double>(ptsUs) / 1e6);
     };
     param.onPlayFinished = [this]() {
-        onStreamEof();
+        // 切换线程
+        QMetaObject::invokeMethod(this, [this]() {
+            onStreamEof();
+        }, Qt::QueuedConnection);
     };
 #ifdef _WIN32
     param.d3d11Device = m_videoRenderer->getD3D11Device();
@@ -60,7 +63,6 @@ void PlayerController::onOpen()
 }
 void PlayerController::onClose()
 {
-    m_streamEof = false;
     m_audioRenderer->stop();
     m_videoRenderer->stop();
     Player::instance().close();
@@ -115,21 +117,10 @@ void PlayerController::fastRewind()
 
 void PlayerController::onStreamEof()
 {
-    // 仅视频的情况下，直接停止
-    if (Player::instance().hasVideo() && !Player::instance().hasAudio()) {
-        onClose();
-    } else {
-        // 有音频的情况下，等待音频播放完毕
-        m_streamEof = true;
+    while (m_audioRenderer->isPlaying()) {
+        QThread::msleep(1);
     }
-}
-
-void PlayerController::onAudioPlayingStateChanged(bool playing)
-{
-    if (m_streamEof.load() && !playing) {
-        // 音频播放完毕，关闭播放器
-        onClose();
-    }
+    onClose();
 }
 
 } // namespace view

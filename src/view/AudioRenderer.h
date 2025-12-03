@@ -19,13 +19,11 @@ public:
     bool start(int sampleRate, int channels, int64_t startTimeUs);
     void stop();
 
-signals:
-    void playingStateChanged(bool playing);
+    bool isPlaying() const { return m_playing.load(); }
 
 private:
     void maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount);
     void updateCurrentData();
-    void setPlaying(bool playing);
 
 private:
     std::atomic_bool m_playing{false};

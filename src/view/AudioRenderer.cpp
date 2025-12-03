@@ -80,11 +80,11 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
         if (!m_currentData) {
             const size_t remainSize = requireSize - copyOffset;
             std::memset(static_cast<uint8_t*>(pOutput) + copyOffset, 0, remainSize);
-            setPlaying(false);
+            m_playing.store(false);
             break;
         }
 
-        setPlaying(true);
+        m_playing.store(true);
         size_t frameBytes = static_cast<size_t>(m_currentData->nbSamples()) * channels * sizeof(int16_t);
         if (m_offset > frameBytes) m_offset = frameBytes; // 防御式修正
         size_t availableSize = frameBytes - m_offset;
@@ -104,14 +104,6 @@ void AudioRenderer::updateCurrentData()
         return;
     }
     m_currentData = media::Player::instance().getAudioFrame();
-}
-
-void AudioRenderer::setPlaying(bool playing)
-{
-    if (m_playing.load() != playing) {
-        m_playing = playing;
-        emit playingStateChanged(playing);
-    }
 }
 
 } // namespace view

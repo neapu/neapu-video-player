@@ -33,7 +33,6 @@ public:
 
 private slots:
     void onStreamEof();
-    void onAudioPlayingStateChanged(bool playing);
 
 signals:
     void fileNameChanged(const QString& fileName);
@@ -46,7 +45,6 @@ private:
     AudioRenderer* m_audioRenderer{nullptr};
 
     State m_state{State::Stopped};
-    std::atomic_bool m_streamEof{false};
 };
 
 } // namespace view
