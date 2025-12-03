@@ -23,7 +23,8 @@ public:
     struct OpenParam {
         std::string url;
         bool swDecodeOnly{false};
-        int baseSerial{0};
+        std::function<void(int64_t)> onPlayingPtsUs;
+        std::function<void()> onPlayFinished;
 #ifdef _WIN32
         ID3D11Device* d3d11Device{nullptr};
 #endif
@@ -31,7 +32,7 @@ public:
     virtual bool open(const OpenParam& param) = 0;
     virtual void close() = 0;
 
-    virtual void seek(double seconds, int serial) = 0;
+    virtual void seek(double seconds) = 0;
 
     virtual bool isOpened() const = 0;
 
@@ -43,6 +44,13 @@ public:
     virtual int channelCount() const = 0;
 
     virtual double durationSeconds() const = 0;
+
+    virtual void play() = 0;
+    virtual void pause() = 0;
+
+    virtual bool isPlaying() const = 0;
+
+    virtual int64_t lastPlayPtsUs() const = 0;
 
 protected:
     Player() = default;

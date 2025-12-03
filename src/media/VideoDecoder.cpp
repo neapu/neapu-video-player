@@ -71,6 +71,7 @@ void VideoDecoder::initializeHWContext()
     auto deviceType = hwAccelTypeFromEnum(m_hwaccelMethod);
     if (deviceType == AV_HWDEVICE_TYPE_NONE) {
         NEAPU_LOGI("No hardware acceleration selected");
+        m_targetPixelFormat = Frame::PixelFormat::YUV420P;
         return;
     }
 
@@ -111,10 +112,12 @@ void VideoDecoder::initializeHWContext()
             m_hwDeviceCtx = nullptr;
             return;
         }
+        m_targetPixelFormat = Frame::PixelFormat::D3D11Texture2D;
         NEAPU_LOGI("Initialized D3D11VA HW device context for video decoding");
     } else
 #endif
     {
+        m_targetPixelFormat = Frame::PixelFormat::YUV420P;
         int ret = av_hwdevice_ctx_create(&m_hwDeviceCtx, deviceType, nullptr, nullptr, 0);
         if (ret < 0) {
             std::string errStr = getFFmpegErrorString(ret);
@@ -209,7 +212,7 @@ FramePtr VideoDecoder::hwFrameTransfer(FramePtr&& avFrame)
 }
 FramePtr VideoDecoder::postProcess(FramePtr&& avFrame)
 {
-    if (avFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
+    if (avFrame->pixelFormat() == m_targetPixelFormat) {
         return avFrame;
     }
 

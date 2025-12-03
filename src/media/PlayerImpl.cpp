@@ -9,19 +9,142 @@ extern "C"{
 }
 
 namespace media {
+static int64_t getCurrentTimeUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 FramePtr PlayerImpl::getVideoFrame()
 {
+    if (!m_playing.load()) {
+        return nullptr;
+    }
     if (!m_videoDecoder) {
         return nullptr;
     }
-    return m_videoDecoder->getFrame();
+    for (;;) {
+        if (!m_nextVideoFrame) {
+            m_nextVideoFrame = m_videoDecoder->getFrame();
+        }
+        if (!m_nextVideoFrame) {
+            return nullptr;
+        }
+
+        if (m_nextVideoFrame->type() == Frame::FrameType::EndOfStream) {
+            m_videoEof = true;
+            if (m_param.onPlayFinished && (m_audioEof.load() || !m_audioDecoder)) {
+                m_param.onPlayFinished();
+            }
+            m_nextVideoFrame.reset();
+            return nullptr;
+        }
+
+        // 丢弃过期帧
+        if (m_nextVideoFrame->serial() < m_serial) {
+            NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
+                m_nextVideoFrame->serial(), m_serial.load());
+            m_nextVideoFrame.reset();
+            continue;
+        }
+
+        if (m_nextVideoFrame->type() == Frame::FrameType::Flush) {
+            {
+                std::lock_guard<std::mutex> lock(m_seekMutex);
+                m_videoSeeking = false;
+            }
+            if (!m_audioDecoder) m_startTimeUs = 0;
+            m_nextVideoFrame.reset();
+            continue;
+        }
+        
+        if (m_startTimeUs > 0) {
+            // 判断是否到播放时间
+            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs.load();
+            if (m_nextVideoFrame->ptsUs() > expectedPlayTimeUs) {
+                // 还没到播放时间，返回空
+                return nullptr;
+            }
+        } else if (!m_audioDecoder) {
+            // 无音频时，初始化m_startTimeUs
+            m_startTimeUs = getCurrentTimeUs() - m_nextVideoFrame->ptsUs();
+        }
+        // 到了播放时间，返回该帧
+        auto frame = std::move(m_nextVideoFrame);
+        if (!m_audioDecoder) {
+            m_lastPlayPtsUs = frame->ptsUs();
+            if (m_param.onPlayingPtsUs) {
+                m_param.onPlayingPtsUs(m_lastPlayPtsUs.load());
+            }
+        }
+        m_nextVideoFrame.reset();
+        return frame;
+    }
+    return nullptr;
 }
 FramePtr PlayerImpl::getAudioFrame()
 {
+    if (!m_playing.load()) {
+        return nullptr;
+    }
     if (!m_audioDecoder) {
         return nullptr;
     }
-    return m_audioDecoder->getFrame();
+    for (;;) {
+        if (!m_nextAudioFrame) {
+            m_nextAudioFrame = m_audioDecoder->getFrame();
+        }
+        if (!m_nextAudioFrame) {
+            return nullptr;
+        }
+        if (m_nextAudioFrame->type() == Frame::FrameType::EndOfStream) {
+            m_audioEof = true;
+            if (m_param.onPlayFinished && (m_videoEof.load() || !m_videoDecoder)) {
+                m_param.onPlayFinished();
+            }
+            m_nextAudioFrame.reset();
+            return nullptr;
+        }
+        // 丢弃过期帧
+        if (m_nextAudioFrame->serial() < m_serial) {
+            NEAPU_LOGD("Discarding expired audio frame with serial {}, current serial is {}",
+                m_nextAudioFrame->serial(), m_serial.load());
+            m_nextAudioFrame.reset();
+            continue;
+        }
+        if (m_nextAudioFrame->type() == Frame::FrameType::Flush) {
+            {
+                std::lock_guard<std::mutex> lock(m_seekMutex);
+                m_audioSeeking = false;
+            }
+            m_startTimeUs = 0;
+            m_nextAudioFrame.reset();
+            continue;
+        }
+        if (m_startTimeUs > 0) {
+            // 判断是否到播放时间
+            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
+            auto waitDurationUs = m_nextAudioFrame->ptsUs() - expectedPlayTimeUs;
+            if (waitDurationUs > m_nextAudioFrame->durationUs()) {
+                // 还没到播放时间，返回空
+                return nullptr;
+            } else if (waitDurationUs < -m_nextAudioFrame->durationUs()) {
+                // 已经过了播放时间，丢弃该帧
+                NEAPU_LOGD("Discarding expired audio frame with PTS {}, expected play time is {}",
+                    m_nextAudioFrame->ptsUs(), expectedPlayTimeUs);
+                m_nextAudioFrame.reset();
+                continue;
+            }
+        }
+        auto frame = std::move(m_nextAudioFrame);;
+        m_nextAudioFrame.reset();
+        // 反响校准m_startTimeUs
+        m_lastPlayPtsUs = frame->ptsUs();
+        m_startTimeUs = getCurrentTimeUs() - m_lastPlayPtsUs.load();
+        if (m_param.onPlayingPtsUs) {
+            m_param.onPlayingPtsUs(m_lastPlayPtsUs.load());
+        }
+        return frame;
+    }
+    return nullptr;
 }
 bool PlayerImpl::open(const OpenParam& param)
 {
@@ -57,14 +180,47 @@ void PlayerImpl::close()
         m_audioDecoder.reset();
     }
     m_demuxer.reset();
+    m_serial = 0;
+    m_startTimeUs = 0;
+    m_playing = false;
+    m_lastPlayPtsUs = 0;
+    m_nextVideoFrame.reset();
+    m_nextAudioFrame.reset();
+    m_videoEof = false;
+    m_audioEof = false;
     NEAPU_LOGI("Media file closed");
 }
 
-void PlayerImpl::seek(double seconds, int serial)
+void PlayerImpl::seek(double seconds)
 {
-    m_param.baseSerial = serial;
-    NEAPU_LOGI("Seeking to {} seconds, serial {}", seconds, serial);
-    m_demuxer->seek(seconds, serial);
+    if (!m_demuxer) {
+        NEAPU_LOGW("Cannot seek, demuxer is not opened");
+        return;
+    }
+    if (!m_playing) {
+        NEAPU_LOGW("Cannot seek, player is not playing");
+        return;
+    }
+    if (seconds < 0.0 || seconds > durationSeconds()) {
+        NEAPU_LOGW("Seek position {} seconds is out of range", seconds);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_seekMutex);
+        if (m_videoSeeking || m_audioSeeking) {
+            NEAPU_LOGW("A seek operation is already in progress, ignoring new seek request");
+            return;
+        }
+        if (m_videoDecoder) {
+            m_videoSeeking = true;
+        }
+        if (m_audioDecoder) {
+            m_audioSeeking = true;
+        }
+    }
+    m_serial++;
+    NEAPU_LOGI("Seeking to {} seconds, serial {}", seconds, m_serial.load());
+    m_demuxer->seek(seconds, m_serial.load());
 }
 bool PlayerImpl::isOpened() const
 {
@@ -141,7 +297,7 @@ void PlayerImpl::createVideoDecoder()
             );
 
             auto ret = videoDecoder->testDecode();
-            m_demuxer->seek(0, m_param.baseSerial, true);
+            m_demuxer->seek(0, m_serial.load(), true);
             if (!ret) {
                 NEAPU_LOGW("Video decoder test decode failed with method {}", static_cast<int>(method));
                 continue;
@@ -167,5 +323,14 @@ void PlayerImpl::createAudioDecoder()
         [this]() { return m_demuxer->getAudioPacket(); });
     m_audioDecoder->start();
     NEAPU_LOGI("Audio decoder created successfully");
+}
+void PlayerImpl::play() 
+{
+    m_startTimeUs = getCurrentTimeUs() - m_lastPlayPtsUs.load();
+    m_playing = true;
+}
+void PlayerImpl::pause() 
+{
+    m_playing = false;
 }
 } // namespace media

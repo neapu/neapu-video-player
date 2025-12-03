@@ -12,11 +12,6 @@ namespace view {
 PlayerController::PlayerController(VideoRenderer* videoRenderer, QObject* parent) : QObject(parent), m_videoRenderer(videoRenderer)
 {
     m_audioRenderer = new AudioRenderer(this);
-    connect(m_audioRenderer, &AudioRenderer::eof, this, &PlayerController::onAudioEof, Qt::QueuedConnection);
-    connect(m_videoRenderer, &VideoRenderer::eof, this, &PlayerController::onVideoEof, Qt::QueuedConnection);
-    connect(m_audioRenderer, &AudioRenderer::playingPts, m_videoRenderer, &VideoRenderer::onAudioPtsUpdated, Qt::QueuedConnection);
-    connect(m_audioRenderer, &AudioRenderer::playingPts, this, &PlayerController::onAudioPts, Qt::QueuedConnection);
-    connect(m_videoRenderer, &VideoRenderer::playingPts, this, &PlayerController::onVideoPts, Qt::QueuedConnection);
 }
 PlayerController::~PlayerController()
 {
@@ -34,8 +29,13 @@ void PlayerController::onOpen()
 
     Player::OpenParam param;
     param.url = filePath.toStdString();
-    // param.swDecodeOnly = true;
-    param.baseSerial = m_serial;
+    param.swDecodeOnly = false;
+    param.onPlayingPtsUs = [this](int64_t ptsUs) {
+        emit positionChanged(static_cast<double>(ptsUs) / 1e6);
+    };
+    param.onPlayFinished = [this]() {
+        onStreamEof();
+    };
 #ifdef _WIN32
     param.d3d11Device = m_videoRenderer->getD3D11Device();
 #endif
@@ -47,17 +47,12 @@ void PlayerController::onOpen()
     }
     auto currentTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (Player::instance().hasVideo()) {
-        m_videoEof = false;
         m_videoRenderer->start(Player::instance().fps(), currentTimeUs);
-    } else {
-        m_videoEof = true;
     }
     if (Player::instance().hasAudio()) {
-        m_audioEof = false;
         m_audioRenderer->start(Player::instance().sampleRate(), Player::instance().channelCount(), currentTimeUs);
-    } else {
-        m_audioEof = true;
     }
+    media::Player::instance().play();
     m_state = State::Playing;
     emit stateChanged(m_state);
     emit durationChanged(Player::instance().durationSeconds());
@@ -65,10 +60,10 @@ void PlayerController::onOpen()
 }
 void PlayerController::onClose()
 {
+    m_streamEof = false;
     m_audioRenderer->stop();
     m_videoRenderer->stop();
     Player::instance().close();
-    m_serial = 0;
     m_state = State::Stopped;
     emit stateChanged(m_state);
     emit fileNameChanged(QString());
@@ -76,45 +71,27 @@ void PlayerController::onClose()
 void PlayerController::onPauseOrResume()
 {
     if (m_state == State::Playing) {
-        m_audioRenderer->stop();
-        m_videoRenderer->pause();
+        media::Player::instance().pause();
         m_state = State::Pause;
-        emit stateChanged(m_state);
     } else if (m_state == State::Pause) {
-        if (Player::instance().hasVideo()) {
-            m_videoRenderer->start(Player::instance().fps(), 0);
-        }
-        if (Player::instance().hasAudio()) {
-            m_audioRenderer->start(Player::instance().sampleRate(), Player::instance().channelCount(), 0);
-        }
+        media::Player::instance().play();
         m_state = State::Playing;
-        emit stateChanged(m_state);
     }
+    emit stateChanged(m_state);
 }
 void PlayerController::seek(double seconds)
 {
     if (m_state != State::Playing) {
         return;
     }
-    if (m_videoRenderer->seeking() || m_audioRenderer->seeking()) {
-        return;
-    }
-    m_serial++;
-    m_videoRenderer->seek(m_serial);
-    m_audioRenderer->seek(m_serial);
-    Player::instance().seek(seconds, m_serial);
+    Player::instance().seek(seconds);
 }
 void PlayerController::fastForward()
 {
     if (m_state != State::Playing) {
         return;
     }
-    double currentPos = 0.0;
-    if (Player::instance().hasAudio()) { // 优先使用音频时间戳
-        currentPos = static_cast<double>(m_audioRenderer->currentPtsUs()) / 1e6;
-    } else if (Player::instance().hasVideo()) {
-        currentPos = static_cast<double>(m_videoRenderer->currentPtsUs()) / 1e6;
-    }
+    double currentPos = (double)media::Player::instance().lastPlayPtsUs() / 1e6;
     double newPos = currentPos + 15.0; // 快进15秒
     if (newPos > Player::instance().durationSeconds()) {
         newPos = Player::instance().durationSeconds();
@@ -128,50 +105,30 @@ void PlayerController::fastRewind()
     if (m_state != State::Playing) {
         return;
     }
-    double currentPos = 0.0;
-    if (Player::instance().hasAudio()) { // 优先使用音频时间戳
-        currentPos = static_cast<double>(m_audioRenderer->currentPtsUs()) / 1e6;
-    } else if (Player::instance().hasVideo()) {
-        currentPos = static_cast<double>(m_videoRenderer->currentPtsUs()) / 1e6;
-    }
+    double currentPos = (double)media::Player::instance().lastPlayPtsUs() / 1e6;
     double newPos = currentPos - 15.0; // 快退15秒
     if (newPos < 0.0) {
         newPos = 0.0;
     }
     seek(newPos);
 }
-void PlayerController::checkEof()
+
+void PlayerController::onStreamEof()
 {
-    if (m_audioEof && m_videoEof) {
-        NEAPU_LOGI("Playback reached end of file");
-        Player::instance().close();
-        m_serial = 0;
-        m_state = State::Stopped;
-        emit stateChanged(m_state);
-        emit fileNameChanged(QString());
+    // 仅视频的情况下，直接停止
+    if (Player::instance().hasVideo() && !Player::instance().hasAudio()) {
+        onClose();
+    } else {
+        // 有音频的情况下，等待音频播放完毕
+        m_streamEof = true;
     }
 }
-void PlayerController::onAudioEof()
-{
-    m_audioEof = true;
-    m_audioRenderer->stop();
-    checkEof();
-}
-void PlayerController::onVideoEof()
-{
-    m_videoEof = true;
-    m_videoRenderer->stop();
-    checkEof();
-}
 
-void PlayerController::onAudioPts(int64_t ptsUs)
+void PlayerController::onAudioPlayingStateChanged(bool playing)
 {
-    emit positionChanged(static_cast<double>(ptsUs) / 1e6);
-}
-void PlayerController::onVideoPts(int64_t ptsUs)
-{
-    if (!Player::instance().hasAudio()) {
-        emit positionChanged(static_cast<double>(ptsUs) / 1e6);
+    if (m_streamEof.load() && !playing) {
+        // 音频播放完毕，关闭播放器
+        onClose();
     }
 }
 

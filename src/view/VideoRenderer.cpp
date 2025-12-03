@@ -12,10 +12,6 @@
 using media::Frame;
 
 namespace view {
-static int64_t getCurrentTimeUs()
-{
-    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
 static const float vertexData[] = {
     // 位置         // 纹理坐标
     -1.0f,  1.0f,  0.0f, 0.0f,
@@ -129,10 +125,6 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
         return;
     }
 
-    if (m_pause) {
-        return;
-    }
-
     RenderImpl(cb);
     if (m_running) {
         update();
@@ -141,48 +133,25 @@ void VideoRenderer::render(QRhiCommandBuffer* cb)
 void VideoRenderer::start(double fps, int64_t startTimeUs)
 {
     NEAPU_FUNC_TRACE;
-    m_fps = fps;
     m_running = true;
-    m_pause = false;
-    m_startTimeUs = startTimeUs;
     update();
 }
 void VideoRenderer::stop()
 {
     NEAPU_FUNC_TRACE;
     m_running = false;
-    m_pause = false;
     m_renderFrame.reset();
-    m_startTimeUs = 0;
-    m_serial = 0;
     update();
 }
 
-void VideoRenderer::pause()
-{
-    m_pause = true;
-}
 
-void VideoRenderer::seek(int serial)
-{
-    NEAPU_LOGD("Seeking video renderer to serial {}", serial);
-    m_seeking = true;
-    m_serial = serial;
-}
-int64_t VideoRenderer::currentPtsUs() const
-{
-    return m_currentPtsUs;
-}
 #ifdef _WIN32
 ID3D11Device* VideoRenderer::getD3D11Device()
 {
     return m_d3d11Device;
 }
 #endif
-void VideoRenderer::onAudioPtsUpdated(int64_t ptsUs)
-{
-    m_startTimeUs = getCurrentTimeUs() - ptsUs;
-}
+
 void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
 {
     if (!m_running) {
@@ -190,18 +159,12 @@ void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
         createEmptyPipeline();
     } else {
         if (!m_renderFrame) {
-            m_renderFrame = getNextFrame();
+            m_renderFrame = media::Player::instance().getVideoFrame();
         }
         if (!m_renderFrame) {
             return;
         }
-        if (!shouldRenderNewFrame()) {
-            return;
-        }
-        if (m_renderFrame->serial() < m_serial) {
-            m_renderFrame.reset();
-            return;
-        }
+
         if (m_renderFrame->width() != m_width ||
             m_renderFrame->height() != m_height ||
             m_renderFrame->pixelFormat() != m_pixelFormat) {
@@ -451,8 +414,6 @@ void VideoRenderer::updateTextures(QRhiResourceUpdateBatch* rub)
         return;
     }
     // NEAPU_LOGD("Render pts={}us", m_renderFrame->ptsUs());
-    m_currentPtsUs = m_renderFrame->ptsUs();
-    emit playingPts(m_renderFrame->ptsUs());
     if (m_renderFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
         updateD3D11Texture();
     } else {
@@ -649,100 +610,6 @@ QString VideoRenderer::getFragmentShaderName()
 
     return QString(":/shaders/%1.frag.qsb").arg(name);
 }
-media::FramePtr VideoRenderer::getNextFrame()
-{
-    // QThreadPool::globalInstance()->start([this]() {
-        // while (m_running) {
-        //     auto nextFrame = media::Player::instance().getVideoFrame();
-        //     if (!nextFrame) {
-        //         return;
-        //     }
-        //     if (nextFrame->type() == Frame::FrameType::EndOfStream) {
-        //         // 收到结束帧
-        //         NEAPU_LOGI("Received end-of-file video frame");
-        //         emit eof();
-        //         return;
-        //     }
-        //
-        //     if (nextFrame->serial() < m_serial) {
-        //         // 丢弃过期帧
-        //         NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
-        //             nextFrame->serial(), m_serial.load());
-        //         continue;
-        //     }
-        //     if (nextFrame->type() == Frame::FrameType::Flush) {
-        //         m_startTimeUs = 0;
-        //         m_seeking = false;
-        //         NEAPU_LOGD("Received flush video frame, resetting start time");
-        //         continue;
-        //     }
-        //     if (m_startTimeUs == 0) {
-        //         // 这个值为0代表是刚seek过，需要重新计算startTimeUs
-        //         m_startTimeUs = getCurrentTimeUs() - nextFrame->ptsUs();
-        //         m_nextFrame = std::move(nextFrame);
-        //         update();
-        //         return;
-        //     }
-        //     auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-        //
-        //     // 如果pts早于预播放时间，并且超过了阈值，则丢弃
-        //     auto thresholdUs = static_cast<int64_t>(1e6 / m_fps);
-        //     if (nextFrame->ptsUs() < expectedPlayTimeUs - thresholdUs) {
-        //         NEAPU_LOGD("Discarding late video frame with PTS {}us, expected play time {}us",
-        //             nextFrame->ptsUs(), expectedPlayTimeUs);
-        //         continue;
-        //     }
-        //     // 如果pts晚与预播放时间，说明还没到播放时间，需要等待
-        //     int64_t waitTimeUs = nextFrame->ptsUs() - expectedPlayTimeUs;
-        //     if (waitTimeUs > 1000000) {
-        //         // 等待超过1秒，不正常
-        //         NEAPU_LOGE("Unrealistic wait time for video frame: {}us", waitTimeUs);
-        //         waitTimeUs = 1000000;
-        //     }
-        //     if (waitTimeUs > 0) {
-        //         // NEAPU_LOGD("Waiting {}us for video frame with PTS {}us", waitTimeUs, nextFrame->ptsUs());
-        //         QThread::usleep(static_cast<unsigned long>(waitTimeUs));
-        //     }
-        //     m_nextFrame = std::move(nextFrame);
-        //     update();
-        //     return;
-        // }
-    // });
-    while (m_running) {
-        auto nextFrame = media::Player::instance().getVideoFrame();
-        if (!nextFrame) {
-            return nullptr;
-        }
-        if (nextFrame->type() == Frame::FrameType::EndOfStream) {
-            // 收到结束帧
-            NEAPU_LOGI("Received end-of-file video frame");
-            emit eof();
-            return nullptr;
-        }
-        if (nextFrame->serial() < m_serial) {
-            // 丢弃过期帧
-            NEAPU_LOGD("Discarding expired video frame with serial {}, current serial is {}",
-                nextFrame->serial(), m_serial.load());
-            continue;
-        }
-        if (nextFrame->type() == Frame::FrameType::Flush) {
-            m_startTimeUs = 0;
-            m_seeking = false;
-            NEAPU_LOGD("Received flush video frame, resetting start time");
-            continue;
-        }
-        return nextFrame;
-    }
-    return nullptr;
-}
-bool VideoRenderer::shouldRenderNewFrame()
-{
-    if (!m_renderFrame) {
-        return false;
-    }
 
-    auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-    return m_renderFrame->ptsUs() <= expectedPlayTimeUs;
-}
 
 } // namespace view

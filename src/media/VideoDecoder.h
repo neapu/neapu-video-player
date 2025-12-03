@@ -29,6 +29,8 @@ public:
 #endif
     ~VideoDecoder() override;
 
+    Frame::PixelFormat targetPixelFormat() const { return m_targetPixelFormat; }
+
 protected:
     virtual void initializeHWContext();
     virtual FramePtr convertFixelFormat(FramePtr&& avFrame);
@@ -43,6 +45,8 @@ protected:
 #endif
     int m_hwPixelFormat{-1};
     SwsContext* m_swsCtx{nullptr};
+
+    Frame::PixelFormat m_targetPixelFormat{Frame::PixelFormat::YUV420P};
 };
 
 } // namespace media

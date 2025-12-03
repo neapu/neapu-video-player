@@ -9,10 +9,6 @@
 #include "../media/Player.h"
 
 namespace view {
-static int64_t getCurrentTimeUs()
-{
-    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
 AudioRenderer::AudioRenderer(QObject* parent)
     : QObject(parent)
 {
@@ -56,7 +52,6 @@ bool AudioRenderer::start(int sampleRate, int channels, int64_t startTimeUs)
         m_device = nullptr;
         return false;
     }
-    m_startTimeUs = startTimeUs;
     m_running = true;
 
     return true;
@@ -66,10 +61,7 @@ void AudioRenderer::stop()
 {
     NEAPU_FUNC_TRACE;
     m_running = false;
-    m_nextData.reset();
     m_currentData.reset();
-    m_startTimeUs = 0;
-    m_serial = 0;
     if (m_device) {
         ma_device_stop(m_device);
         ma_device_uninit(m_device);
@@ -77,27 +69,15 @@ void AudioRenderer::stop()
         m_device = nullptr;
     }
 }
-void AudioRenderer::seek(int serial)
-{
-    m_seeking = true;
-    m_serial = serial;
-}
-int64_t AudioRenderer::currentPtsUs() const
-{
-    return m_currentPtsUs;
-}
+
 void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, uint32_t frameCount)
 {
     const auto channels = static_cast<size_t>(pDevice->playback.channels);
     const auto requireSize = static_cast<size_t>(frameCount) * channels * sizeof(int16_t);
     size_t copyOffset = 0;
     while (copyOffset < requireSize) {
-        updateCurrentData(1000000 * frameCount / pDevice->sampleRate);
-        auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-        // 本次请求的播放时长
-        auto requestDurationUs = static_cast<int64_t>(1e6 * (requireSize - copyOffset) / (channels * sizeof(int16_t) * pDevice->sampleRate));
-        if (!m_currentData ||
-            m_currentData->ptsUs() > expectedPlayTimeUs + requestDurationUs) {
+        updateCurrentData();
+        if (!m_currentData) {
             const size_t remainSize = requireSize - copyOffset;
             std::memset(static_cast<uint8_t*>(pOutput) + copyOffset, 0, remainSize);
             setPlaying(false);
@@ -118,57 +98,12 @@ void AudioRenderer::maDataCallback(ma_device* pDevice, void* pOutput, const void
         }
     }
 }
-void AudioRenderer::updateCurrentData(int64_t thresholdUs)
+void AudioRenderer::updateCurrentData()
 {
     if (m_currentData) {
         return;
     }
-    while (m_running) {
-        if (!m_nextData) {
-            m_nextData = media::Player::instance().getAudioFrame();
-        }
-        if (!m_nextData) {
-            return;
-        }
-        if (m_nextData->type() == media::Frame::FrameType::EndOfStream) {
-            NEAPU_LOGI("Received end-of-file audio frame");
-            emit eof();
-            return;
-        }
-        if (m_nextData->serial() < m_serial) {
-            m_nextData.reset();
-            continue;
-        }
-        if (m_nextData->type() == media::Frame::FrameType::Flush) {
-            m_startTimeUs = 0;
-            m_seeking = false;
-            NEAPU_LOGD("Received flush audio frame, resetting start time");
-            m_nextData.reset();
-            continue;
-        }
-        if (m_startTimeUs > 0) {
-            auto expectedPlayTimeUs = getCurrentTimeUs() - m_startTimeUs;
-            // 如果pts早于预播放时间，并且超过了阈值，则丢弃
-            if (m_nextData->ptsUs() < expectedPlayTimeUs - thresholdUs) {
-                NEAPU_LOGD("Discarding late audio frame with PTS {}us, expected play time {}us",
-                    m_nextData->ptsUs(), expectedPlayTimeUs);
-                m_nextData.reset();
-                continue;
-            }
-            // 如果pts晚与预播放时间，说明还没到播放时间，输出空帧
-            int64_t waitTimeUs = m_nextData->ptsUs() - expectedPlayTimeUs;
-            if (waitTimeUs > thresholdUs) {
-                return;
-            }
-        }
-        m_currentData = std::move(m_nextData);
-        m_offset = 0;
-        // 反向校准startTimeUs
-        m_startTimeUs = getCurrentTimeUs() - m_currentData->ptsUs();
-        m_currentPtsUs = m_currentData->ptsUs();
-        emit playingPts(m_currentData->ptsUs());
-        return;
-    }
+    m_currentData = media::Player::instance().getAudioFrame();
 }
 
 void AudioRenderer::setPlaying(bool playing)

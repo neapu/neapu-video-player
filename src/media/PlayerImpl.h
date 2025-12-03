@@ -21,7 +21,7 @@ public:
     bool open(const OpenParam& param) override;
     void close() override;
 
-    void seek(double seconds, int serial) override;
+    void seek(double seconds) override;
 
     bool isOpened() const override;
 
@@ -34,6 +34,12 @@ public:
 
     double durationSeconds() const override;
 
+    void play() override;
+    void pause() override;
+
+    bool isPlaying() const override { return m_playing.load(); }
+    
+    int64_t lastPlayPtsUs() const override { return m_lastPlayPtsUs.load(); }
 private:
     void createVideoDecoder();
     void createAudioDecoder();
@@ -43,6 +49,19 @@ private:
     std::unique_ptr<Demuxer> m_demuxer;
     std::unique_ptr<AudioDecoder> m_audioDecoder;
     std::unique_ptr<VideoDecoder> m_videoDecoder;
+
+    std::atomic_int m_serial{0};
+    std::atomic<int64_t> m_startTimeUs{0};
+    std::atomic<int64_t> m_lastPlayPtsUs{0};
+    std::atomic_bool m_playing{false};
+    bool m_videoSeeking{false};
+    bool m_audioSeeking{false};
+    std::mutex m_seekMutex;
+    std::atomic_bool m_videoEof{false};
+    std::atomic_bool m_audioEof{false};
+
+    FramePtr m_nextVideoFrame;
+    FramePtr m_nextAudioFrame;
 };
 
 } // namespace media

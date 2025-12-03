@@ -27,26 +27,14 @@ public:
 
     void start(double fps, int64_t startTimeUs);
     void stop();
-    void pause();
-
-    void seek(int serial);
-    bool seeking() const { return m_seeking.load(); }
-
-    int64_t currentPtsUs() const;
-
-    // void onFrameReady(media::FramePtr&& newFrame);
+    bool isRunning() const { return m_running.load(); }
 
 #ifdef _WIN32
     ID3D11Device* getD3D11Device();
 #endif
 
-public slots:
-    void onAudioPtsUpdated(int64_t ptsUs);
-
 signals:
     void initialized();
-    void eof();
-    void playingPts(int64_t ptsUs);
 
 private:
     void RenderImpl(QRhiCommandBuffer* cb);
@@ -67,10 +55,6 @@ private:
 
     QString getFragmentShaderName();
 
-
-    media::FramePtr getNextFrame();
-    bool shouldRenderNewFrame();
-
 private:
     QRhi* m_rhi{nullptr};
     std::unique_ptr<QRhiGraphicsPipeline> m_pipeline{};
@@ -80,25 +64,16 @@ private:
     std::unique_ptr<QRhiTexture> m_textures[3]{};
     std::unique_ptr<QRhiBuffer> m_vsUBuffer{}; // 用于顶点着色器的uniform缓冲区，用于传递缩放矩阵
 
-    // media::FramePtr m_currentFrame{};
-    // media::FramePtr m_nextFrame{};
     media::FramePtr m_renderFrame{};
 
     QSize m_lastVideoSize{0, 0};
     QSize m_lastRenderSize{0, 0};
 
     std::atomic_bool m_running{false};
-    std::atomic<double> m_fps{30.0};
-    std::atomic<int64_t> m_startTimeUs{0};
-    std::atomic_int m_serial{0};
-    std::atomic_bool m_seeking{false};
-    std::atomic_bool m_pause{false};
 
     int m_width{0};
     int m_height{0};
     media::Frame::PixelFormat m_pixelFormat{media::Frame::PixelFormat::UNKNOWN};
-
-    std::atomic<int64_t> m_currentPtsUs{0};
 
 #ifdef _WIN32
     ID3D11Device* m_d3d11Device{nullptr};
