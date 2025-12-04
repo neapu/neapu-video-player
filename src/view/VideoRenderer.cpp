@@ -105,6 +105,14 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
         return;
     }
 
+    // 创建颜色转换参数的uniform缓冲区 (mat4=64字节, Y_OFFSET存储在第四行)
+    m_colorParamsUBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
+    if (!m_colorParamsUBuffer->create()) {
+        NEAPU_LOGE("Failed to create color params uniform buffer");
+        m_colorParamsUBuffer.reset();
+        return;
+    }
+
     // 先重建一个空的管线，等待第一帧到来时再重建
     if (!createEmptyPipeline()) {
         NEAPU_LOGE("Failed to create empty pipeline for video renderer");
@@ -154,6 +162,8 @@ ID3D11Device* VideoRenderer::getD3D11Device()
 
 void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
 {
+    const QSize pixelSize = renderTarget()->pixelSize();
+    auto rub = m_rhi->nextResourceUpdateBatch();
     if (!m_running) {
         m_renderFrame.reset();
         createEmptyPipeline();
@@ -162,6 +172,7 @@ void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
             m_renderFrame = media::Player::instance().getVideoFrame();
         }
         if (!m_renderFrame) {
+            rub->release();
             return;
         }
 
@@ -171,16 +182,16 @@ void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
             m_width = m_renderFrame->width();
             m_height = m_renderFrame->height();
             m_pixelFormat = m_renderFrame->pixelFormat();
-            if (!recreatePipeline()) {
+            if (!recreatePipeline(rub)) {
                 NEAPU_LOGE("Failed to recreate pipeline for new video frame");
+                rub->release();
                 return;
             }
         }
     }
 
 
-    const QSize pixelSize = renderTarget()->pixelSize();
-    auto rub = m_rhi->nextResourceUpdateBatch();
+
 
     updateTextures(rub);
     updateVertexUniformBuffer(rub, pixelSize);
@@ -197,9 +208,9 @@ void VideoRenderer::RenderImpl(QRhiCommandBuffer* cb)
     cb->draw(4);
     cb->endPass();
 }
-bool VideoRenderer::recreatePipeline()
+bool VideoRenderer::recreatePipeline(QRhiResourceUpdateBatch* rub)
 {
-    if (!recreateTextures()) {
+    if (!recreateTextures(rub)) {
         return false;
     }
 
@@ -263,13 +274,20 @@ bool VideoRenderer::createPipeline()
     return true;
 }
 
-bool VideoRenderer::recreateTextures()
+bool VideoRenderer::recreateTextures(QRhiResourceUpdateBatch* rub)
 {
+    bool ret = false;
     if (m_renderFrame->pixelFormat() == Frame::PixelFormat::D3D11Texture2D) {
-        return createD3D11Texture();
+        ret = createD3D11Texture();
     } else {
-        return createYUVTextures();
+        ret = createYUVTextures();
     }
+    if (!ret) {
+        NEAPU_LOGE("Failed to recreate textures for video frame");
+        return false;
+    }
+    updateColorTransformUniformBuffer(rub);
+    return true;
 }
 bool VideoRenderer::createYUVTextures()
 {
@@ -297,6 +315,7 @@ bool VideoRenderer::createYUVTextures()
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, m_textures[1].get(), m_sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::FragmentStage, m_textures[2].get(), m_sampler.get()),
         QRhiShaderResourceBinding::uniformBuffer(3, QRhiShaderResourceBinding::VertexStage, m_vsUBuffer.get()),
+        QRhiShaderResourceBinding::uniformBuffer(4, QRhiShaderResourceBinding::FragmentStage, m_colorParamsUBuffer.get()),
     });
     if (!m_srb->create()) {
         NEAPU_LOGE("Failed to create shader resource bindings for YUV textures");
@@ -394,6 +413,7 @@ bool VideoRenderer::createD3D11Texture()
         QRhiShaderResourceBinding::sampledTexture(0, QRhiShaderResourceBinding::FragmentStage, m_textures[0].get(), m_sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, m_textures[1].get(), m_sampler.get()),
         QRhiShaderResourceBinding::uniformBuffer(3, QRhiShaderResourceBinding::VertexStage, m_vsUBuffer.get()),
+        QRhiShaderResourceBinding::uniformBuffer(4, QRhiShaderResourceBinding::FragmentStage, m_colorParamsUBuffer.get()),
     });
     if (!m_srb->create()) {
         NEAPU_LOGE("Failed to create shader resource bindings for D3D11 texture");
@@ -596,20 +616,78 @@ QString VideoRenderer::getFragmentShaderName()
         return ":/shaders/none.frag.qsb";
     }
 
-    if (m_renderFrame->colorRange() == Frame::ColorRange::Full) {
-        name += "_full";
-    } else {
-        name += "_limited";
-    }
-
-    if (m_renderFrame->colorSpace() == Frame::ColorSpace::BT709) {
-        name += "_bt709";
-    } else {
-        name += "_bt601";
-    }
+    // if (m_renderFrame->colorRange() == Frame::ColorRange::Full) {
+    //     name += "_full";
+    // } else {
+    //     name += "_limited";
+    // }
+    //
+    // if (m_renderFrame->colorSpace() == Frame::ColorSpace::BT709) {
+    //     name += "_bt709";
+    // } else {
+    //     name += "_bt601";
+    // }
 
     return QString(":/shaders/%1.frag.qsb").arg(name);
 }
+void VideoRenderer::updateColorTransformUniformBuffer(QRhiResourceUpdateBatch* rub)
+{
+    if (!m_renderFrame) {
+        return;
+    }
 
+    float yOffset = 0.0f;
+    if (m_renderFrame->colorRange() == Frame::ColorRange::Limited) {
+        yOffset = 16.0f / 255.0f;
+    }
+
+    constexpr float bt601Limited[9] = {
+        1.164f,  0.0f,    1.596f,
+        1.164f, -0.391f, -0.813f,
+        1.164f,  2.018f,  0.0f
+    };
+    constexpr float bt601Full[9] = {
+        1.0f,  0.0f,    1.402f,
+        1.0f, -0.344f, -0.714f,
+        1.0f,  1.772f,  0.0f
+    };
+    constexpr float bt709Limited[9] = {
+        1.164f,  0.0f,    1.793f,
+        1.164f, -0.213f, -0.533f,
+        1.164f,  2.112f,  0.0f
+    };
+    constexpr float bt709Full[9] = {
+        1.0f,  0.0f,    1.574f,
+        1.0f, -0.187f, -0.468f,
+        1.0f,  1.855f,  0.0f
+    };
+
+    // 根据颜色空间和范围选择转换矩阵
+    using enum Frame::ColorSpace;
+    QMatrix3x3 mat3x3;
+    mat3x3.setToIdentity();
+    if (m_renderFrame->colorSpace() == BT601) {
+        if (m_renderFrame->colorRange() == Frame::ColorRange::Limited) {
+            mat3x3 = QMatrix3x3(bt601Limited);
+        } else {
+            mat3x3 = QMatrix3x3(bt601Full);
+        }
+    } else if (m_renderFrame->colorSpace() == BT709) {
+        if (m_renderFrame->colorRange() == Frame::ColorRange::Limited) {
+            mat3x3 = QMatrix3x3(bt709Limited);
+        } else {
+            mat3x3 = QMatrix3x3(bt709Full);
+        }
+    } else {
+        // 默认使用BT601 Limited
+        mat3x3 = QMatrix3x3(bt601Limited);
+    }
+
+    // 使用 QMatrix4x4，将 Y_OFFSET 存入第四行第一列 [3][0]
+    QMatrix4x4 colorTransform(mat3x3);
+    colorTransform(3, 0) = yOffset;
+
+    rub->updateDynamicBuffer(m_colorParamsUBuffer.get(), 0, 64, colorTransform.constData());
+}
 
 } // namespace view

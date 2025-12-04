@@ -38,12 +38,12 @@ signals:
 
 private:
     void RenderImpl(QRhiCommandBuffer* cb);
-    bool recreatePipeline();
+    bool recreatePipeline(QRhiResourceUpdateBatch* rub);
     bool createEmptyPipeline();
     bool createPipeline();
 
 
-    bool recreateTextures();
+    bool recreateTextures(QRhiResourceUpdateBatch* rub);
     bool createYUVTextures();
     bool createD3D11Texture();
 
@@ -55,6 +55,8 @@ private:
 
     QString getFragmentShaderName();
 
+    void updateColorTransformUniformBuffer(QRhiResourceUpdateBatch* rub);
+
 private:
     QRhi* m_rhi{nullptr};
     std::unique_ptr<QRhiGraphicsPipeline> m_pipeline{};
@@ -63,6 +65,7 @@ private:
     std::unique_ptr<QRhiSampler> m_sampler{};
     std::unique_ptr<QRhiTexture> m_textures[3]{};
     std::unique_ptr<QRhiBuffer> m_vsUBuffer{}; // 用于顶点着色器的uniform缓冲区，用于传递缩放矩阵
+    std::unique_ptr<QRhiBuffer> m_colorParamsUBuffer{}; // 用于颜色转换参数的uniform缓冲区 (mat3 + float, std140布局)
 
     media::FramePtr m_renderFrame{};
 

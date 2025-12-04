@@ -25,6 +25,9 @@ qt_add_shaders(${EXE_NAME} "shaders"
         shaders/yuv420p_full_bt601.frag
         shaders/yuv420p_limited_bt709.frag
         shaders/yuv420p_full_bt709.frag
+        shaders/nv12.frag
+        shaders/p010.frag
+        shaders/yuv420p.frag
 )
 
 file(GLOB SVG_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "images/*.svg")
