@@ -11,6 +11,8 @@ extern "C" {
 #include <libavutil/pixfmt.h>
 #include <libavutil/avutil.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/rational.h>
+#include <libavutil/hwcontext.h>
 }
 
 #ifdef _WIN32
@@ -19,8 +21,7 @@ extern "C" {
 
 namespace media {
 
-Frame::Frame(FrameType type, int serial)
-    : m_type(type), m_serial(serial)
+Frame::Frame(FrameType type, int serial) : m_type(type), m_serial(serial)
 {
     m_avFrame = av_frame_alloc();
     if (!m_avFrame) {
@@ -30,14 +31,14 @@ Frame::Frame(FrameType type, int serial)
 
 Frame::~Frame()
 {
+    // NEAPU_LOGD("Frame::~Frame() m_avFrame={:p}", static_cast<void*>(m_avFrame));
     if (m_avFrame) {
         av_frame_free(&m_avFrame);
         m_avFrame = nullptr;
     }
 }
 
-Frame::Frame(Frame&& other) noexcept
-    : m_avFrame(other.m_avFrame)
+Frame::Frame(Frame&& other) noexcept : m_avFrame(other.m_avFrame)
 {
     other.m_avFrame = nullptr;
 }
@@ -92,9 +93,12 @@ int64_t Frame::ptsUs() const
 {
     if (!m_avFrame) return 0;
     int64_t ts = 0;
-    if (m_avFrame->pts != AV_NOPTS_VALUE) ts = m_avFrame->pts;
-    else if (m_avFrame->best_effort_timestamp != AV_NOPTS_VALUE) ts = m_avFrame->best_effort_timestamp;
-    else return 0;
+    if (m_avFrame->pts != AV_NOPTS_VALUE)
+        ts = m_avFrame->pts;
+    else if (m_avFrame->best_effort_timestamp != AV_NOPTS_VALUE)
+        ts = m_avFrame->best_effort_timestamp;
+    else
+        return 0;
     AVRational tb = m_avFrame->time_base;
     if (tb.num > 0 && tb.den > 0) {
         return av_rescale_q(ts, tb, AVRational{1, 1000000});
@@ -116,13 +120,13 @@ int64_t Frame::durationUs() const
 
 Frame::PixelFormat Frame::pixelFormat() const
 {
-    if (!m_avFrame) return PixelFormat::UNKNOWN;
+    if (!m_avFrame) return PixelFormat::None;
     switch (static_cast<AVPixelFormat>(m_avFrame->format)) {
-        case AV_PIX_FMT_YUV420P: return PixelFormat::YUV420P;
+    case AV_PIX_FMT_YUV420P: return PixelFormat::YUV420P;
 #ifdef _WIN32
-        case AV_PIX_FMT_D3D11: return PixelFormat::D3D11Texture2D;
+    case AV_PIX_FMT_D3D11: return PixelFormat::D3D11Texture2D;
 #endif
-        default: return PixelFormat::UNKNOWN;
+    default: return PixelFormat::None;
     }
 }
 
@@ -130,8 +134,8 @@ Frame::ColorSpace Frame::colorSpace() const
 {
     if (!m_avFrame) return ColorSpace::BT601;
     switch (m_avFrame->colorspace) {
-        case AVCOL_SPC_BT709: return ColorSpace::BT709;
-        default: return ColorSpace::BT601;
+    case AVCOL_SPC_BT709: return ColorSpace::BT709;
+    default: return ColorSpace::BT601;
     }
 }
 
@@ -139,8 +143,8 @@ Frame::ColorRange Frame::colorRange() const
 {
     if (!m_avFrame) return ColorRange::Limited;
     switch (m_avFrame->color_range) {
-        case AVCOL_RANGE_JPEG: return ColorRange::Full;
-        default: return ColorRange::Limited;
+    case AVCOL_RANGE_JPEG: return ColorRange::Full;
+    default: return ColorRange::Limited;
     }
 }
 
@@ -212,5 +216,20 @@ int64_t Frame::nbSamples() const
 AVFrame* Frame::avFrame()
 {
     return m_avFrame;
+}
+Frame::PixelFormat Frame::swFormat()
+{
+    if (!m_avFrame->hw_frames_ctx) {
+        return pixelFormat();
+    }
+
+    AVHWFramesContext* hwFramesCtx = reinterpret_cast<AVHWFramesContext*>(m_avFrame->hw_frames_ctx->data);
+    enum AVPixelFormat swFmt = hwFramesCtx->sw_format;
+    switch (swFmt) {
+    case AV_PIX_FMT_YUV420P: return PixelFormat::YUV420P;
+    case AV_PIX_FMT_NV12: return PixelFormat::NV12;
+    case AV_PIX_FMT_P010: return PixelFormat::P010;
+    default: return PixelFormat::None;
+    }
 }
 } // namespace media

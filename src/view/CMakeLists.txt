@@ -14,6 +14,12 @@ qt_add_library(${LIB_NAME} STATIC
         VideoRenderer.h
         PlayerControllor.cpp
         PlayerController.h
+        Pipeline.cpp
+        Pipeline.h
+        YuvPipeline.cpp
+        YuvPipeline.h
+        D3D11VAPipeline.cpp
+        D3D11VAPipeline.h
 )
 
 target_link_libraries(${LIB_NAME} PUBLIC Qt6::Gui Qt6::Widgets Qt6::GuiPrivate Qt6::Concurrent)

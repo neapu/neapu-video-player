@@ -42,8 +42,10 @@ public:
     int64_t ptsUs() const; // us
     int64_t durationUs() const; // us
     enum class PixelFormat {
-        UNKNOWN,
+        None,
         YUV420P,
+        NV12,
+        P010,
         D3D11Texture2D,
     };
     PixelFormat pixelFormat() const;
@@ -74,6 +76,8 @@ public:
     int64_t nbSamples() const;
 
     AVFrame* avFrame();
+
+    PixelFormat swFormat();
 
 private:
     FrameType m_type{FrameType::Normal};
