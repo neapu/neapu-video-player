@@ -7,39 +7,31 @@
 #include "logger.h"
 #ifdef _WIN32
 namespace view {
-D3D11VAPipeline::D3D11VAPipeline(QRhi* rhi, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext)
-    : Pipeline(media::Frame::PixelFormat::D3D11Texture2D, rhi),
+D3D11VAPipeline::D3D11VAPipeline(QRhi* rhi, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext, media::Frame::PixelFormat swFormat)
+    : Pipeline(rhi),
       m_d3d11Device(d3d11Device),
       m_d3d11DeviceContext(d3d11DeviceContext)
 {
+    if (swFormat == media::Frame::PixelFormat::NV12) {
+        m_textureFormat = DXGI_FORMAT_NV12;
+    } else if (swFormat == media::Frame::PixelFormat::P010) {
+        m_textureFormat = DXGI_FORMAT_P010;
+    } else {
+        NEAPU_LOGE("Unsupported software format for D3D11VA pipeline: {}", static_cast<int>(swFormat));
+        throw std::runtime_error("Unsupported software format for D3D11VA pipeline");
+    }
+    m_pixelFormat = media::Frame::PixelFormat::D3D11Texture2D;
 }
 D3D11VAPipeline::~D3D11VAPipeline() {}
-bool D3D11VAPipeline::create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget)
-{
-    auto swFormat = frame->swFormat();
-    NEAPU_LOGI("Creating D3D11VA pipeline for frame: {}x{}, swFormat={}", frame->width(), frame->height(), static_cast<int>(swFormat));
-    auto* texture = frame->d3d11Texture2D();
-    if (!texture) {
-        NEAPU_LOGE("Frame does not contain a valid D3D11 texture");
-        return false;
-    }
-    D3D11_TEXTURE2D_DESC desc{};
-    texture->GetDesc(&desc);
-    if (desc.Format != DXGI_FORMAT_NV12 && desc.Format != DXGI_FORMAT_P010) {
-        NEAPU_LOGE("Unsupported D3D11 texture format: {}", static_cast<int>(desc.Format));
-        return false;
-    }
-    m_textureFormat = desc.Format;
-    return Pipeline::create(frame, renderTarget);
-}
+
 void D3D11VAPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame)
 {
     D3D11_BOX srcBox{};
     srcBox.left = 0;
     srcBox.top = 0;
     srcBox.front = 0;
-    srcBox.right = static_cast<UINT>(m_width);
-    srcBox.bottom = static_cast<UINT>(m_height);
+    srcBox.right = static_cast<UINT>(frame->width());
+    srcBox.bottom = static_cast<UINT>(frame->height());
     srcBox.back = 1;
 
     auto* texture = frame->d3d11Texture2D();
@@ -55,14 +47,14 @@ void D3D11VAPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePt
         frame->subresourceIndex(),
         &srcBox);
 }
-bool D3D11VAPipeline::createSrb()
+bool D3D11VAPipeline::createSrb(const QSize& size)
 {
     NEAPU_FUNC_TRACE;
 
     m_nativeTexture.Reset();
     D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = m_width;
-    desc.Height = m_height;
+    desc.Width = size.width();
+    desc.Height = size.height();
     desc.MipLevels = 1;
     desc.ArraySize = 1;
     desc.Format = m_textureFormat;
@@ -87,20 +79,20 @@ bool D3D11VAPipeline::createSrb()
     if (m_textureFormat == DXGI_FORMAT_NV12) {
         m_yTexture.reset(m_rhi->newTexture(
             QRhiTexture::R8,
-            QSize(m_width, m_height), 1,
+            QSize(size.width(), size.height()), 1,
             QRhiTexture::Flags()));
         m_uvTexture.reset(m_rhi->newTexture(
             QRhiTexture::RG8,
-            QSize(m_width / 2, m_height / 2), 1,
+            QSize(size.width() / 2, size.height() / 2), 1,
             QRhiTexture::Flags()));
     } else if (m_textureFormat == DXGI_FORMAT_P010) {
         m_yTexture.reset(m_rhi->newTexture(
             QRhiTexture::R16,
-            QSize(m_width, m_height), 1,
+            QSize(size.width(), size.height()), 1,
             QRhiTexture::Flags()));
         m_uvTexture.reset(m_rhi->newTexture(
             QRhiTexture::RG16,
-            QSize(m_width / 2, m_height / 2), 1,
+            QSize(size.width() / 2, size.height() / 2), 1,
             QRhiTexture::Flags()));
     } else {
         NEAPU_LOGE("Unsupported texture format for SRB creation: {}", static_cast<int>(m_textureFormat));

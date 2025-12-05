@@ -63,15 +63,17 @@ std::unique_ptr<Pipeline> Pipeline::makeFormFrame(const media::FramePtr& frame, 
             return std::make_unique<YuvPipeline>(param.rhi);
         case D3D11Texture2D:
 #ifdef _WIN32
-            return std::make_unique<D3D11VAPipeline>(param.rhi, param.d3d11Device, param.d3d11DeviceContext);
+            return std::make_unique<D3D11VAPipeline>(param.rhi, param.d3d11Device, param.d3d11DeviceContext, frame->swFormat());
 #endif
         case Vaapi: {
+#ifdef __linux__
             auto vaDisplay = media::Player::instance().vaDisplay();
             if (vaDisplay == nullptr || param.eglDisplay == nullptr) {
                 NEAPU_LOGE("VAAPI display or EGL display is null");
                 return nullptr;
             }
             return std::make_unique<VaapiPipeline>(param.rhi, vaDisplay, param.eglDisplay, frame->swFormat());
+#endif
         }
         default:
             NEAPU_LOGE("Unsupported pixel format: {}", static_cast<int>(frame->pixelFormat()));
