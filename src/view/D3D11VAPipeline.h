@@ -31,6 +31,5 @@ protected:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_nativeTexture{ nullptr };
     DXGI_FORMAT m_textureFormat{ DXGI_FORMAT_UNKNOWN };
 };
-
-#endif
 } // namespace view
+#endif
