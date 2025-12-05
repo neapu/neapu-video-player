@@ -9,7 +9,7 @@ namespace view {
 
 class YuvPipeline : public Pipeline {
 public:
-    YuvPipeline(QRhi* rhi, QRhiRenderTarget* renderTarget);
+    explicit YuvPipeline(QRhi* rhi);
     ~YuvPipeline() override;
 
     void updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame) override;

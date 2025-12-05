@@ -22,6 +22,8 @@ if (MSVC)
     add_compile_options(/utf-8)
 endif ()
 
+message("CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
+
 add_subdirectory(first_party/logger)
 include_directories(first_party/logger)
 add_subdirectory(third_party/miniaudio)

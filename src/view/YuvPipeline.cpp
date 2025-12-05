@@ -6,8 +6,8 @@
 #include <logger.h>
 
 namespace view {
-YuvPipeline::YuvPipeline(QRhi* rhi, QRhiRenderTarget* renderTarget)
-    : Pipeline(media::Frame::PixelFormat::YUV420P, rhi, renderTarget)
+YuvPipeline::YuvPipeline(QRhi* rhi)
+    : Pipeline(media::Frame::PixelFormat::YUV420P, rhi)
 {
 }
 YuvPipeline::~YuvPipeline() = default;

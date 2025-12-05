@@ -8,6 +8,7 @@
 #include <cstring>
 #include "YuvPipeline.h"
 #include "D3D11VAPipeline.h"
+#include "VaapiPipeline.h"
 
 namespace view {
 static QShader loadShader(const QString& name)
@@ -19,8 +20,8 @@ static QShader loadShader(const QString& name)
     }
     return QShader::fromSerialized(file.readAll());
 }
-Pipeline::Pipeline(media::Frame::PixelFormat pixFmt, QRhi* rhi, QRhiRenderTarget* renderTarget)
-    : m_pixelFormat(pixFmt), m_rhi(rhi), m_renderTarget(renderTarget)
+Pipeline::Pipeline(media::Frame::PixelFormat pixFmt, QRhi* rhi)
+    : m_pixelFormat(pixFmt), m_rhi(rhi)
 {
 }
 Pipeline::~Pipeline() = default;
@@ -28,11 +29,11 @@ std::unique_ptr<Pipeline> Pipeline::createForFrame(const media::FramePtr& frame,
 {
     std::unique_ptr<Pipeline> pipeline;
     if (frame && frame->pixelFormat() == media::Frame::PixelFormat::YUV420P) {
-        pipeline = std::make_unique<YuvPipeline>(rhi, renderTarget);
+        pipeline = std::make_unique<YuvPipeline>(rhi);
     } else {
-        pipeline = std::make_unique<Pipeline>(media::Frame::PixelFormat::None, rhi, renderTarget);
+        pipeline = std::make_unique<Pipeline>(media::Frame::PixelFormat::None, rhi);
     }
-    if (!pipeline->create(frame, nullptr)) {
+    if (!pipeline->create(frame, renderTarget)) {
         NEAPU_LOGE("Failed to create pipeline");
         return nullptr;
     }
@@ -53,7 +54,22 @@ std::unique_ptr<Pipeline> Pipeline::createForFrame(const media::FramePtr& frame,
     return createForFrame(frame, rhi, renderTarget);
 }
 #endif
-bool Pipeline::create(const media::FramePtr& frame, QRhiCommandBuffer* cb)
+#ifdef __linux__
+std::unique_ptr<Pipeline> Pipeline::createVaapiPipeline(const media::FramePtr& frame, QRhi* rhi, QRhiRenderTarget* renderTarget,
+                                                        void* vaDisplay, void* eglDisplay)
+{
+    if (frame && frame->pixelFormat() == media::Frame::PixelFormat::Vaapi) {
+        auto pipeline = std::make_unique<VaapiPipeline>(rhi, vaDisplay, eglDisplay);
+        if (!pipeline->create(frame, renderTarget)) {
+            NEAPU_LOGE("Failed to create VAAPI pipeline");
+            return nullptr;
+        }
+        return pipeline;
+    }
+    return createForFrame(frame, rhi, renderTarget);
+}
+#endif
+bool Pipeline::create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget)
 {
     NEAPU_FUNC_TRACE;
     Q_UNUSED(frame);
@@ -102,7 +118,7 @@ bool Pipeline::create(const media::FramePtr& frame, QRhiCommandBuffer* cb)
         return false;
     }
 
-    return createPipeline();
+    return createPipeline(renderTarget);
 }
 QRhiGraphicsPipeline* Pipeline::getPipeline()
 {
@@ -172,7 +188,7 @@ QString Pipeline::getFragmentShaderName()
 {
     return ":/shaders/none.frag.qsb";
 }
-bool Pipeline::createPipeline()
+bool Pipeline::createPipeline(QRhiRenderTarget* renderTarget)
 {
     NEAPU_FUNC_TRACE;
     auto vs = loadShader(":/shaders/video.vert.qsb");
@@ -202,7 +218,7 @@ bool Pipeline::createPipeline()
     m_pipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
     m_pipeline->setShaderResourceBindings(m_srb.get());
     // 默认混合和深度测试
-    m_pipeline->setRenderPassDescriptor(m_renderTarget->renderPassDescriptor());
+    m_pipeline->setRenderPassDescriptor(renderTarget->renderPassDescriptor());
     if (!m_pipeline->create()) {
         NEAPU_LOGE("Failed to create graphics pipeline");
         m_pipeline.reset();

@@ -13,6 +13,11 @@ extern "C" {
 #ifdef _WIN32
 #include <libavutil/hwcontext_d3d11va.h>
 #endif
+#ifdef __linux__
+extern "C"{
+#include <libavutil/hwcontext_vaapi.h>
+}
+#endif
 
 namespace media {
 static AVHWDeviceType hwAccelTypeFromEnum(VideoDecoder::HWAccelMethod method)
@@ -69,9 +74,9 @@ void VideoDecoder::initializeHWContext()
 {
     NEAPU_FUNC_TRACE;
     auto deviceType = hwAccelTypeFromEnum(m_hwaccelMethod);
+    m_targetPixelFormat = Frame::PixelFormat::YUV420P;
     if (deviceType == AV_HWDEVICE_TYPE_NONE) {
         NEAPU_LOGI("No hardware acceleration selected");
-        m_targetPixelFormat = Frame::PixelFormat::YUV420P;
         return;
     }
 
@@ -117,7 +122,6 @@ void VideoDecoder::initializeHWContext()
     } else
 #endif
     {
-        m_targetPixelFormat = Frame::PixelFormat::YUV420P;
         int ret = av_hwdevice_ctx_create(&m_hwDeviceCtx, deviceType, nullptr, nullptr, 0);
         if (ret < 0) {
             std::string errStr = getFFmpegErrorString(ret);
@@ -125,8 +129,18 @@ void VideoDecoder::initializeHWContext()
             m_hwDeviceCtx = nullptr;
             return;
         }
-        NEAPU_LOGI("Created HW device context for video decoding");
+        NEAPU_LOGI("Created HW device context for video decoding, device type: {}", static_cast<int>(deviceType));
     }
+
+#ifdef __linux__
+    if (deviceType == AV_HWDEVICE_TYPE_VAAPI) {
+        auto* hwDevCtx = reinterpret_cast<AVHWDeviceContext*>(m_hwDeviceCtx->data);
+        auto* vaDevCtx = static_cast<AVVAAPIDeviceContext*>(hwDevCtx->hwctx);
+        m_vaDisplay = vaDevCtx->display;
+        m_targetPixelFormat = Frame::PixelFormat::Vaapi;
+        NEAPU_LOGI_STREAM << "VAAPI display obtained: " << m_vaDisplay;
+    }
+#endif
 
     m_codecCtx->hw_device_ctx = av_buffer_ref(m_hwDeviceCtx);
     m_codecCtx->opaque = this;

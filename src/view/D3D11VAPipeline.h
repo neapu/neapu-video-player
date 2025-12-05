@@ -12,10 +12,10 @@ namespace view {
 
 class D3D11VAPipeline : public Pipeline {
 public:
-    D3D11VAPipeline(QRhi* rhi, QRhiRenderTarget* renderTarget, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext);
+    D3D11VAPipeline(QRhi* rhi, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext);
     ~D3D11VAPipeline() override;
 
-    bool create(const media::FramePtr& frame, QRhiCommandBuffer* cb) override;
+    bool create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget) override;
 
     void updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame) override;
 protected:

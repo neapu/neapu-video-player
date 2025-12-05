@@ -7,14 +7,14 @@
 #include "logger.h"
 #ifdef _WIN32
 namespace view {
-D3D11VAPipeline::D3D11VAPipeline(QRhi* rhi, QRhiRenderTarget* renderTarget, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext)
-    : Pipeline(media::Frame::PixelFormat::D3D11Texture2D, rhi, renderTarget),
+D3D11VAPipeline::D3D11VAPipeline(QRhi* rhi, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext)
+    : Pipeline(media::Frame::PixelFormat::D3D11Texture2D, rhi),
       m_d3d11Device(d3d11Device),
       m_d3d11DeviceContext(d3d11DeviceContext)
 {
 }
 D3D11VAPipeline::~D3D11VAPipeline() {}
-bool D3D11VAPipeline::create(const media::FramePtr& frame, QRhiCommandBuffer* cb)
+bool D3D11VAPipeline::create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget)
 {
     auto swFormat = frame->swFormat();
     NEAPU_LOGI("Creating D3D11VA pipeline for frame: {}x{}, swFormat={}", frame->width(), frame->height(), static_cast<int>(swFormat));
@@ -30,7 +30,7 @@ bool D3D11VAPipeline::create(const media::FramePtr& frame, QRhiCommandBuffer* cb
         return false;
     }
     m_textureFormat = desc.Format;
-    return Pipeline::create(frame, cb);
+    return Pipeline::create(frame, renderTarget);
 }
 void D3D11VAPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame)
 {
@@ -115,9 +115,7 @@ bool D3D11VAPipeline::createSrb()
         return false;
     }
 
-    if (!m_srb) {
-        m_srb.reset(m_rhi->newShaderResourceBindings());
-    }
+    m_srb.reset(m_rhi->newShaderResourceBindings());
     m_srb->setBindings({
         QRhiShaderResourceBinding::sampledTexture(0, QRhiShaderResourceBinding::FragmentStage, m_yTexture.get(), m_sampler.get()),
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, m_uvTexture.get(), m_sampler.get()),

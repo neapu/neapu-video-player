@@ -270,7 +270,15 @@ double PlayerImpl::durationSeconds() const
     }
     return m_demuxer->durationSeconds();
 }
-
+#ifdef __linux__
+void* PlayerImpl::vaDisplay() const
+{
+    if (!m_videoDecoder) {
+        return nullptr;
+    }
+    return m_videoDecoder->vaDisplay();
+}
+#endif
 void PlayerImpl::createVideoDecoder()
 {
     std::vector<VideoDecoder::HWAccelMethod> hwaccelMethods;

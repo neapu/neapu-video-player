@@ -31,6 +31,10 @@ public:
 
     Frame::PixelFormat targetPixelFormat() const { return m_targetPixelFormat; }
 
+#ifdef __linux__
+    void* vaDisplay() const { return m_vaDisplay; }
+#endif
+
 protected:
     virtual void initializeHWContext();
     virtual FramePtr convertFixelFormat(FramePtr&& avFrame);
@@ -47,6 +51,9 @@ protected:
     SwsContext* m_swsCtx{nullptr};
 
     Frame::PixelFormat m_targetPixelFormat{Frame::PixelFormat::YUV420P};
+#ifdef __linux__
+    void* m_vaDisplay{ nullptr };
+#endif
 };
 
 } // namespace media

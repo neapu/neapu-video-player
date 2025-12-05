@@ -40,6 +40,10 @@ public:
     bool isPlaying() const override { return m_playing.load(); }
     
     int64_t lastPlayPtsUs() const override { return m_lastPlayPtsUs.load(); }
+
+#ifdef __linux__
+    void* vaDisplay() const override;
+#endif
 private:
     void createVideoDecoder();
     void createAudioDecoder();

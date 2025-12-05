@@ -8,6 +8,10 @@
 #include <QThreadPool>
 #include "../media/Packet.h"
 #include "../media/Player.h"
+#ifdef __linux__
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#endif
 
 using media::Frame;
 
@@ -70,8 +74,16 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
         NEAPU_LOGW("QRhi backend is not D3D11, current backend: {}", m_rhi->backendName());
     }
 #endif
-    auto backendName = m_rhi->backendName();
-    NEAPU_LOGI("QRhi backend: {}", backendName);
+#ifdef __linux__
+    if (m_rhi->backend() == QRhi::OpenGLES2) {
+        m_eglDisplay = eglGetCurrentDisplay();
+        if (m_eglDisplay == EGL_NO_DISPLAY) {
+            NEAPU_LOGE("Failed to get current EGL display.");
+            return;
+        }
+    }
+#endif
+    NEAPU_LOGI_STREAM << "Using QRhi backend: " << m_rhi->backendName();
 
     // 创建顶点缓冲区
     m_vertexBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Immutable,
@@ -87,6 +99,8 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
         NEAPU_LOGE("Failed to create pipeline for video renderer");
         return;
     }
+
+
 
     // 上传顶点数据
     auto* rub = m_rhi->nextResourceUpdateBatch();
@@ -144,6 +158,14 @@ void VideoRenderer::RenderFrame(QRhiCommandBuffer* cb)
         m_pipeline.reset();
 #ifdef _WIN32
         m_pipeline = Pipeline::createForFrame(frame, m_rhi, renderTarget(), m_d3d11Device, m_d3d11DeviceContext);
+#elifdef __linux__
+        auto vaDisplay = media::Player::instance().vaDisplay();
+        if (vaDisplay && m_eglDisplay) {
+            m_pipeline = Pipeline::createVaapiPipeline(frame, m_rhi, renderTarget(), vaDisplay, m_eglDisplay);
+        } else {
+            NEAPU_LOGW("VAAPI or EGL display is null, falling back to default pipeline creation");
+            m_pipeline = Pipeline::createForFrame(frame, m_rhi, renderTarget());
+        }
 #else
         m_pipeline = Pipeline::createForFrame(frame, m_rhi, renderTarget());
 #endif
@@ -176,7 +198,7 @@ void VideoRenderer::RenderEmpty(QRhiCommandBuffer* cb)
 
     RenderImpl(rub, cb);
 }
-void VideoRenderer::RenderImpl(QRhiResourceUpdateBatch* rub, QRhiCommandBuffer* cb)
+void VideoRenderer::RenderImpl(QRhiResourceUpdateBatch* rub, QRhiCommandBuffer* cb) const
 {
     const QSize pixelSize = renderTarget()->pixelSize();
     cb->beginPass(renderTarget(), QColor(0, 0, 0, 255), {1.0f, 0}, rub);

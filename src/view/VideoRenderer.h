@@ -41,7 +41,7 @@ signals:
 private:
     void RenderFrame(QRhiCommandBuffer* cb);
     void RenderEmpty(QRhiCommandBuffer* cb);
-    void RenderImpl(QRhiResourceUpdateBatch* rub, QRhiCommandBuffer* cb);
+    void RenderImpl(QRhiResourceUpdateBatch* rub, QRhiCommandBuffer* cb) const;
 
 private:
     QRhi* m_rhi{nullptr};
@@ -53,6 +53,9 @@ private:
 #ifdef _WIN32
     ID3D11Device* m_d3d11Device{nullptr};
     ID3D11DeviceContext* m_d3d11DeviceContext{nullptr};
+#endif
+#ifdef __linux__
+    void* m_eglDisplay{ nullptr };
 #endif
 };
 

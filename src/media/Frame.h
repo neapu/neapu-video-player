@@ -47,6 +47,7 @@ public:
         NV12,
         P010,
         D3D11Texture2D,
+        Vaapi,
     };
     PixelFormat pixelFormat() const;
     enum class ColorSpace {
@@ -68,6 +69,10 @@ public:
 #ifdef _WIN32
     ID3D11Texture2D* d3d11Texture2D() const;
     int subresourceIndex() const;
+#endif
+
+#ifdef __linux__
+    unsigned int vaapiSurfaceId() const;
 #endif
 
     // audio, 格式固定为S16LE

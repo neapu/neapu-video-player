@@ -14,7 +14,7 @@ namespace view {
 
 class Pipeline {
 public:
-    Pipeline(media::Frame::PixelFormat pixFmt, QRhi* rhi, QRhiRenderTarget* renderTarget);
+    Pipeline(media::Frame::PixelFormat pixFmt, QRhi* rhi);
     virtual ~Pipeline();
 
     static std::unique_ptr<Pipeline> createForFrame(const media::FramePtr& frame, QRhi* rhi, QRhiRenderTarget* renderTarget);
@@ -23,8 +23,14 @@ public:
         const media::FramePtr& frame, QRhi* rhi,
         QRhiRenderTarget* renderTarget, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext);
 #endif
+#ifdef __linux__
+    static std::unique_ptr<Pipeline> createVaapiPipeline(
+        const media::FramePtr& frame, QRhi* rhi,
+        QRhiRenderTarget* renderTarget,
+        void* vaDisplay, void* eglDisplay);
+#endif
 
-    virtual bool create(const media::FramePtr& frame, QRhiCommandBuffer* cb);
+    virtual bool create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget);
 
     virtual QRhiGraphicsPipeline* getPipeline();
     virtual QRhiShaderResourceBindings* getSrb();
@@ -41,7 +47,7 @@ public:
 protected:
     virtual bool createSrb();
     virtual QString getFragmentShaderName();
-    virtual bool createPipeline();
+    virtual bool createPipeline(QRhiRenderTarget* renderTarget);
 
 protected:
     media::Frame::PixelFormat m_pixelFormat{media::Frame::PixelFormat::None};
@@ -49,7 +55,6 @@ protected:
     media::Frame::ColorRange m_colorRange{media::Frame::ColorRange::Limited};
     bool m_colorParamsInitialized{false};
     QRhi* m_rhi{nullptr};
-    QRhiRenderTarget * m_renderTarget{nullptr};
 
     int m_width{0};
     int m_height{0};
@@ -62,9 +67,6 @@ protected:
     std::unique_ptr<QRhiShaderResourceBindings> m_srb{};
     std::unique_ptr<QRhiBuffer> m_vsUBuffer{};
     std::unique_ptr<QRhiBuffer> m_colorParamsUBuffer{}; // 用于颜色转换参数的uniform缓冲区 (mat3 + float, std140布局)
-
-    // 保持帧引用直到下一帧到来，确保纹理上传完成前数据有效
-    media::FramePtr m_currentFrame{};
 };
 
 } // namespace view

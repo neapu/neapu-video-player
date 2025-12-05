@@ -52,6 +52,10 @@ public:
 
     virtual int64_t lastPlayPtsUs() const = 0;
 
+#ifdef __linux__
+    virtual void* vaDisplay() const = 0;
+#endif
+
 protected:
     Player() = default;
 };

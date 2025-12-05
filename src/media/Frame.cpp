@@ -123,9 +123,10 @@ Frame::PixelFormat Frame::pixelFormat() const
     if (!m_avFrame) return PixelFormat::None;
     switch (static_cast<AVPixelFormat>(m_avFrame->format)) {
     case AV_PIX_FMT_YUV420P: return PixelFormat::YUV420P;
-#ifdef _WIN32
+    case AV_PIX_FMT_NV12: return PixelFormat::NV12;
+    case AV_PIX_FMT_P010: return PixelFormat::P010;
     case AV_PIX_FMT_D3D11: return PixelFormat::D3D11Texture2D;
-#endif
+    case AV_PIX_FMT_VAAPI: return PixelFormat::Vaapi;
     default: return PixelFormat::None;
     }
 }
@@ -191,6 +192,13 @@ int Frame::subresourceIndex() const
     if (!m_avFrame) return 0;
     if (static_cast<AVPixelFormat>(m_avFrame->format) != AV_PIX_FMT_D3D11) return 0;
     return static_cast<int>(reinterpret_cast<uintptr_t>(m_avFrame->data[1]));
+}
+#endif
+
+#ifdef __linux__
+unsigned int Frame::vaapiSurfaceId() const
+{
+    return static_cast<unsigned int>(reinterpret_cast<uintptr_t>(m_avFrame->data[3]));
 }
 #endif
 
