@@ -31,16 +31,24 @@ static AVHWDeviceType hwAccelTypeFromEnum(VideoDecoder::HWAccelMethod method)
     default: return AV_HWDEVICE_TYPE_NONE;
     }
 }
+static AVPixelFormat pixelFormatFromEnum(Frame::PixelFormat format)
+{
+    using enum Frame::PixelFormat;
+    switch (format) {
+    case YUV420P: return AV_PIX_FMT_YUV420P;
+    case NV12: return AV_PIX_FMT_NV12;
+    case P010: return AV_PIX_FMT_P010LE;
+    default: return AV_PIX_FMT_NONE;
+    }
+}
+
+VideoDecoder::VideoDecoder(const CreateParam& param)
+    : DecoderBase(param.stream, param.packetCallback, CodecType::Video)
+    , m_hwaccelMethod(param.hwaccelMethod)
 #ifdef _WIN32
-VideoDecoder::VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod, ID3D11Device* d3d11Device)
-    : DecoderBase(stream, packetCallback, CodecType::Video)
-    , m_hwaccelMethod(hwaccelMethod)
-    , m_d3d11Device(d3d11Device)
-#else
-VideoDecoder::VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod)
-    : DecoderBase(stream, packetCallback, CodecType::Video)
-    , m_hwaccelMethod(hwaccelMethod)
+    , m_d3d11Device(param.d3d11Device)
 #endif
+    , m_targetPixelFormat(param.targetPixelFormat)
 {
     NEAPU_FUNC_TRACE;
     if (!m_stream) {
@@ -74,7 +82,6 @@ void VideoDecoder::initializeHWContext()
 {
     NEAPU_FUNC_TRACE;
     auto deviceType = hwAccelTypeFromEnum(m_hwaccelMethod);
-    m_targetPixelFormat = Frame::PixelFormat::YUV420P;
     if (deviceType == AV_HWDEVICE_TYPE_NONE) {
         NEAPU_LOGI("No hardware acceleration selected");
         return;
@@ -117,7 +124,6 @@ void VideoDecoder::initializeHWContext()
             m_hwDeviceCtx = nullptr;
             return;
         }
-        m_targetPixelFormat = Frame::PixelFormat::D3D11Texture2D;
         NEAPU_LOGI("Initialized D3D11VA HW device context for video decoding");
     } else
 #endif
@@ -137,7 +143,6 @@ void VideoDecoder::initializeHWContext()
         auto* hwDevCtx = reinterpret_cast<AVHWDeviceContext*>(m_hwDeviceCtx->data);
         auto* vaDevCtx = static_cast<AVVAAPIDeviceContext*>(hwDevCtx->hwctx);
         m_vaDisplay = vaDevCtx->display;
-        m_targetPixelFormat = Frame::PixelFormat::Vaapi;
         NEAPU_LOGI_STREAM << "VAAPI display obtained: " << m_vaDisplay;
     }
 #endif
@@ -166,6 +171,7 @@ FramePtr VideoDecoder::convertFixelFormat(FramePtr&& avFrame)
         m_swsCtx = nullptr;
     }
 
+    auto targetPixFmt = pixelFormatFromEnum(m_targetPixelFormat);
     if (!m_swsCtx) {
         m_swsCtx = sws_getContext(
             avFrame->width(),
@@ -173,7 +179,7 @@ FramePtr VideoDecoder::convertFixelFormat(FramePtr&& avFrame)
             static_cast<AVPixelFormat>(avFrame->avFrame()->format),
             avFrame->width(),
             avFrame->height(),
-            AV_PIX_FMT_YUV420P,
+            targetPixFmt,
             SWS_BILINEAR,
             nullptr,
             nullptr,
@@ -185,7 +191,7 @@ FramePtr VideoDecoder::convertFixelFormat(FramePtr&& avFrame)
     }
 
     auto retFrame = std::make_unique<Frame>(Frame::FrameType::Normal, avFrame->serial());
-    retFrame->avFrame()->format = AV_PIX_FMT_YUV420P;
+    retFrame->avFrame()->format = targetPixFmt;
     retFrame->avFrame()->width = avFrame->width();
     retFrame->avFrame()->height = avFrame->height();
     int ret = av_frame_get_buffer(retFrame->avFrame(), 32);
@@ -241,7 +247,7 @@ FramePtr VideoDecoder::postProcess(FramePtr&& avFrame)
     }
 
     FramePtr convertedFrame;
-    if (swFrame->avFrame()->format != AV_PIX_FMT_YUV420P) {
+    if (swFrame->pixelFormat() != m_targetPixelFormat) {
         convertedFrame = convertFixelFormat(std::move(swFrame));
         if (!convertedFrame) {
             return nullptr;

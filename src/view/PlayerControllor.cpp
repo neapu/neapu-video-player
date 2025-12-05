@@ -29,7 +29,6 @@ void PlayerController::onOpen()
 
     Player::OpenParam param;
     param.url = filePath.toStdString();
-    param.swDecodeOnly = false;
     param.onPlayingPtsUs = [this](int64_t ptsUs) {
         emit positionChanged(static_cast<double>(ptsUs) / 1e6);
     };
@@ -40,7 +39,26 @@ void PlayerController::onOpen()
         }, Qt::QueuedConnection);
     };
 #ifdef _WIN32
-    param.d3d11Device = m_videoRenderer->getD3D11Device();
+    if (m_videoRenderer->useD3D11()) {
+        param.targetPixelFormat = media::Frame::PixelFormat::D3D11Texture2D;
+        param.d3d11Device = m_videoRenderer->getD3D11Device();
+    } else {
+        param.targetPixelFormat = media::Frame::PixelFormat::YUV420P;
+    }
+    param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
+    param.swDecodeOnly = false;
+#elifdef __linux__
+    if (m_videoRenderer->useOpenGL()) {
+        param.targetPixelFormat = media::Frame::PixelFormat::Vaapi;
+    } else {
+        param.targetPixelFormat = media::Frame::PixelFormat::YUV420P;
+    }
+    param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
+    param.swDecodeOnly = false;
+#else
+    param.targetPixelFormat = media::Frame::PixelFormat::YUV420P;
+    param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
+    param.swDecodeOnly = true;
 #endif
 
     if (!Player::instance().open(param)) {

@@ -31,6 +31,9 @@ public:
     void stop();
     bool isRunning() const { return m_running.load(); }
 
+    bool useD3D11() const;
+    bool useOpenGL() const;
+
 #ifdef _WIN32
     ID3D11Device* getD3D11Device();
 #endif

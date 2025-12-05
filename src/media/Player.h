@@ -25,6 +25,8 @@ public:
         bool swDecodeOnly{false};
         std::function<void(int64_t)> onPlayingPtsUs;
         std::function<void()> onPlayFinished;
+        Frame::PixelFormat targetPixelFormat{Frame::PixelFormat::YUV420P};
+        Frame::PixelFormat downgradePixelFormat{Frame::PixelFormat::YUV420P};
 #ifdef _WIN32
         ID3D11Device* d3d11Device{nullptr};
 #endif

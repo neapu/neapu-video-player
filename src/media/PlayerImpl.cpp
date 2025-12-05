@@ -297,14 +297,22 @@ void PlayerImpl::createVideoDecoder()
 
     for (auto method : hwaccelMethods) {
         try {
-            auto videoDecoder = std::make_unique<VideoDecoder>(
-                m_demuxer->videoStream(),
-                [this]() { return m_demuxer->getVideoPacket(); },
-                method
+            VideoDecoder::CreateParam param;
+            param.stream = m_demuxer->videoStream();
+            param.packetCallback = [this]() { return m_demuxer->getVideoPacket(); };
+            param.hwaccelMethod = method;
+            param.targetPixelFormat = m_param.targetPixelFormat;
 #ifdef _WIN32
-                , m_param.d3d11Device
+            param.d3d11Device = m_param.d3d11Device;
 #endif
-            );
+            if (param.hwaccelMethod == None) {
+                using enum Frame::PixelFormat;
+                if (param.targetPixelFormat == D3D11Texture2D ||
+                    param.targetPixelFormat == Vaapi) {
+                    param.targetPixelFormat = m_param.downgradePixelFormat;
+                }
+            }
+            auto videoDecoder = std::make_unique<VideoDecoder>(param);
 
             auto ret = videoDecoder->testDecode();
             m_demuxer->seek(0, m_serial.load(), true);

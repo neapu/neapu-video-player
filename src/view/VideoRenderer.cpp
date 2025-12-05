@@ -139,6 +139,15 @@ void VideoRenderer::stop()
     update();
 }
 
+bool VideoRenderer::useD3D11() const
+{
+    return m_rhi->backend() == QRhi::D3D11;
+}
+
+bool VideoRenderer::useOpenGL() const
+{
+    return m_rhi->backend() == QRhi::OpenGLES2;
+}
 
 #ifdef _WIN32
 ID3D11Device* VideoRenderer::getD3D11Device()

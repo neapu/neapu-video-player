@@ -22,11 +22,21 @@ public:
         Vaapi, // Linux
         VideoToolBox, // macOS
     };
+    struct CreateParam {
+        AVStream* stream{nullptr};
+        AVPacketCallback packetCallback;
+        HWAccelMethod hwaccelMethod{HWAccelMethod::None};
+        Frame::PixelFormat targetPixelFormat{Frame::PixelFormat::YUV420P};
 #ifdef _WIN32
-    VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod, ID3D11Device* d3d11Device);
-#else
-    VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod);
+        ID3D11Device* d3d11Device{nullptr};
 #endif
+    };
+    VideoDecoder(const CreateParam& param);
+// #ifdef _WIN32
+//     VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod, ID3D11Device* d3d11Device);
+// #else
+//     VideoDecoder(AVStream* stream, const AVPacketCallback& packetCallback, HWAccelMethod hwaccelMethod);
+// #endif
     ~VideoDecoder() override;
 
     Frame::PixelFormat targetPixelFormat() const { return m_targetPixelFormat; }
