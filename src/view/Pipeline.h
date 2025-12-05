@@ -14,38 +14,34 @@ namespace view {
 
 class Pipeline {
 public:
-    Pipeline(media::Frame::PixelFormat pixFmt, QRhi* rhi);
+    explicit Pipeline(QRhi* rhi);
     virtual ~Pipeline();
 
-    static std::unique_ptr<Pipeline> createForFrame(const media::FramePtr& frame, QRhi* rhi, QRhiRenderTarget* renderTarget);
+    struct CreateParam {
+        QRhi* rhi{nullptr};
 #ifdef _WIN32
-    static std::unique_ptr<Pipeline> createForFrame(
-        const media::FramePtr& frame, QRhi* rhi,
-        QRhiRenderTarget* renderTarget, ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext);
+        ID3D11Device* d3d11Device{nullptr};
+        ID3D11DeviceContext* d3d11DeviceContext{nullptr};
+#elifdef  __linux__
+        void* eglDisplay{ nullptr };
 #endif
-#ifdef __linux__
-    static std::unique_ptr<Pipeline> createVaapiPipeline(
-        const media::FramePtr& frame, QRhi* rhi,
-        QRhiRenderTarget* renderTarget,
-        void* vaDisplay, void* eglDisplay);
-#endif
+    };
+    static std::unique_ptr<Pipeline> makeFormFrame(const media::FramePtr& frame, const CreateParam& param);
 
-    virtual bool create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget);
+    bool initialize(QRhiRenderTarget* renderTarget, const QSize& size = QSize{0, 0});
 
-    virtual QRhiGraphicsPipeline* getPipeline();
-    virtual QRhiShaderResourceBindings* getSrb();
-
-    virtual media::Frame::PixelFormat pixelFormat() const { return m_pixelFormat; }
-    virtual int width() const { return m_width; }
-    virtual int height() const { return m_height; }
-
-    virtual bool checkFormat(const media::FramePtr& frame) const;
     virtual void updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame) {}
-    virtual void updateVertexUniforms(QRhiResourceUpdateBatch* rub, const QSize& renderSize);
+
+    QRhiGraphicsPipeline* getPipeline() const;
+    QRhiShaderResourceBindings* getSrb() const;
+
+    media::Frame::PixelFormat pixelFormat() const { return m_pixelFormat; }
+    bool checkFormat(const media::FramePtr& frame) const;
+    void updateVertexUniforms(QRhiResourceUpdateBatch* rub, const QSize& renderSize, const QSize& frameSize);
     void updateColorParamsIfNeeded(const media::FramePtr& frame, QRhiResourceUpdateBatch* rub);
 
 protected:
-    virtual bool createSrb();
+    virtual bool createSrb(const QSize& size);
     virtual QString getFragmentShaderName();
     virtual bool createPipeline(QRhiRenderTarget* renderTarget);
 
@@ -55,9 +51,6 @@ protected:
     media::Frame::ColorRange m_colorRange{media::Frame::ColorRange::Limited};
     bool m_colorParamsInitialized{false};
     QRhi* m_rhi{nullptr};
-
-    int m_width{0};
-    int m_height{0};
 
     QSize m_oldFrameSize{0,0};
     QSize m_oldRenderSize{0,0};

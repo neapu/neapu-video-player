@@ -12,14 +12,12 @@ namespace view {
 
 class VaapiPipeline : public Pipeline {
 public:
-    VaapiPipeline(QRhi* rhi, void* vaDisplay, void* eglDisplay);
+    VaapiPipeline(QRhi* rhi, void* vaDisplay, void* eglDisplay, media::Frame::PixelFormat swFormat);
     ~VaapiPipeline() override;
-
-    bool create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget) override;
 
     void updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame) override;
 protected:
-    bool createSrb() override;
+    bool createSrb(const QSize& size) override;
     QString getFragmentShaderName() override;
 
     int yGLTexture() const;

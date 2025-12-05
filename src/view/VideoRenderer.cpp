@@ -94,13 +94,12 @@ void VideoRenderer::initialize(QRhiCommandBuffer* cb)
         return;
     }
 
-    m_pipeline = Pipeline::createForFrame(nullptr, m_rhi, renderTarget());
-    if (!m_pipeline) {
-        NEAPU_LOGE("Failed to create pipeline for video renderer");
+    m_pipeline = std::make_unique<Pipeline>(m_rhi);
+    if (!m_pipeline->initialize(renderTarget())) {
+        NEAPU_LOGE("Failed to create pipeline resources for video renderer");
+        m_pipeline.reset();
         return;
     }
-
-
 
     // 上传顶点数据
     auto* rub = m_rhi->nextResourceUpdateBatch();
@@ -154,23 +153,26 @@ void VideoRenderer::RenderFrame(QRhiCommandBuffer* cb)
     if (!frame) {
         return;
     }
+    QSize frameSize{frame->width(), frame->height()};
     if (!m_pipeline->checkFormat(frame)) {
         m_pipeline.reset();
+        Pipeline::CreateParam param;
+        param.rhi = m_rhi;
 #ifdef _WIN32
-        m_pipeline = Pipeline::createForFrame(frame, m_rhi, renderTarget(), m_d3d11Device, m_d3d11DeviceContext);
-#elifdef __linux__
-        auto vaDisplay = media::Player::instance().vaDisplay();
-        if (vaDisplay && m_eglDisplay) {
-            m_pipeline = Pipeline::createVaapiPipeline(frame, m_rhi, renderTarget(), vaDisplay, m_eglDisplay);
-        } else {
-            NEAPU_LOGW("VAAPI or EGL display is null, falling back to default pipeline creation");
-            m_pipeline = Pipeline::createForFrame(frame, m_rhi, renderTarget());
-        }
-#else
-        m_pipeline = Pipeline::createForFrame(frame, m_rhi, renderTarget());
+        param.d3d11Device = m_d3d11Device;
+        param.d3d11DeviceContext = m_d3d11DeviceContext;
 #endif
+#ifdef __linux__
+        param.eglDisplay = m_eglDisplay;
+#endif
+        m_pipeline = Pipeline::makeFormFrame(frame, param);
         if (!m_pipeline) {
             NEAPU_LOGE("Failed to create pipeline for frame rendering");
+            return;
+        }
+        if (!m_pipeline->initialize(renderTarget(), frameSize)) {
+            NEAPU_LOGE("Failed to create pipeline resources for frame rendering");
+            m_pipeline.reset();
             return;
         }
     }
@@ -180,19 +182,19 @@ void VideoRenderer::RenderFrame(QRhiCommandBuffer* cb)
 
     m_pipeline->updateColorParamsIfNeeded(frame, rub);
     m_pipeline->updateTexture(rub, std::move(frame));
-    m_pipeline->updateVertexUniforms(rub, pixelSize);
+    m_pipeline->updateVertexUniforms(rub, pixelSize, frameSize);
 
     RenderImpl(rub, cb);
 }
 void VideoRenderer::RenderEmpty(QRhiCommandBuffer* cb)
 {
     m_pipeline.reset();
-    m_pipeline = Pipeline::createForFrame(nullptr, m_rhi, renderTarget());
-    if (!m_pipeline) {
-        NEAPU_LOGE("Failed to create pipeline for empty frame rendering");
+    m_pipeline = std::make_unique<Pipeline>(m_rhi);
+    if (!m_pipeline->initialize(renderTarget())) {
+        NEAPU_LOGE("Failed to create pipeline resources for empty frame rendering");
+        m_pipeline.reset();
         return;
     }
-
 
     auto rub = m_rhi->nextResourceUpdateBatch();
 

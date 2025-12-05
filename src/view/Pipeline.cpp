@@ -9,6 +9,7 @@
 #include "YuvPipeline.h"
 #include "D3D11VAPipeline.h"
 #include "VaapiPipeline.h"
+#include "../media/Player.h"
 
 namespace view {
 static QShader loadShader(const QString& name)
@@ -20,81 +21,30 @@ static QShader loadShader(const QString& name)
     }
     return QShader::fromSerialized(file.readAll());
 }
-Pipeline::Pipeline(media::Frame::PixelFormat pixFmt, QRhi* rhi)
-    : m_pixelFormat(pixFmt), m_rhi(rhi)
-{
-}
-Pipeline::~Pipeline() = default;
-std::unique_ptr<Pipeline> Pipeline::createForFrame(const media::FramePtr& frame, QRhi* rhi, QRhiRenderTarget* renderTarget)
-{
-    std::unique_ptr<Pipeline> pipeline;
-    if (frame && frame->pixelFormat() == media::Frame::PixelFormat::YUV420P) {
-        pipeline = std::make_unique<YuvPipeline>(rhi);
-    } else {
-        pipeline = std::make_unique<Pipeline>(media::Frame::PixelFormat::None, rhi);
-    }
-    if (!pipeline->create(frame, renderTarget)) {
-        NEAPU_LOGE("Failed to create pipeline");
-        return nullptr;
-    }
-    return pipeline;
-}
-#ifdef _WIN32
-std::unique_ptr<Pipeline> Pipeline::createForFrame(const media::FramePtr& frame, QRhi* rhi, QRhiRenderTarget* renderTarget,
-                                                   ID3D11Device* d3d11Device, ID3D11DeviceContext* d3d11DeviceContext)
-{
-    if (frame && frame->pixelFormat() == media::Frame::PixelFormat::D3D11Texture2D) {
-        auto pipeline = std::make_unique<D3D11VAPipeline>(rhi, renderTarget, d3d11Device, d3d11DeviceContext);
-        if (!pipeline->create(frame, nullptr)) {
-            NEAPU_LOGE("Failed to create D3D11VA pipeline");
-            return nullptr;
-        }
-        return pipeline;
-    }
-    return createForFrame(frame, rhi, renderTarget);
-}
-#endif
-#ifdef __linux__
-std::unique_ptr<Pipeline> Pipeline::createVaapiPipeline(const media::FramePtr& frame, QRhi* rhi, QRhiRenderTarget* renderTarget,
-                                                        void* vaDisplay, void* eglDisplay)
-{
-    if (frame && frame->pixelFormat() == media::Frame::PixelFormat::Vaapi) {
-        auto pipeline = std::make_unique<VaapiPipeline>(rhi, vaDisplay, eglDisplay);
-        if (!pipeline->create(frame, renderTarget)) {
-            NEAPU_LOGE("Failed to create VAAPI pipeline");
-            return nullptr;
-        }
-        return pipeline;
-    }
-    return createForFrame(frame, rhi, renderTarget);
-}
-#endif
-bool Pipeline::create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget)
+
+Pipeline::Pipeline(QRhi* rhi)
+    : m_rhi(rhi)
 {
     NEAPU_FUNC_TRACE;
-    Q_UNUSED(frame);
     if (!m_rhi) {
-        NEAPU_LOGE("QRhi is null");
-        return false;
+        throw std::runtime_error("QRhi is null");
     }
+
     // 顶点缩放矩阵
-    m_vsUBuffer.reset(
-        m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64)
-    );
+    m_vsUBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
     if (!m_vsUBuffer->create()) {
         NEAPU_LOGE("Failed to create vertex shader uniform buffer");
-        return false;
+        throw std::runtime_error("Failed to create vertex shader uniform buffer");
     }
+
     // 创建颜色转换参数的uniform缓冲区 - 只在需要时由子类创建
-    // 基础 Pipeline 使用 none.frag.qsb，不需要颜色参数
-    if (m_pixelFormat != media::Frame::PixelFormat::None) {
-        m_colorParamsUBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
-        if (!m_colorParamsUBuffer->create()) {
-            NEAPU_LOGE("Failed to create color params uniform buffer");
-            m_colorParamsUBuffer.reset();
-            return false;
-        }
+    m_colorParamsUBuffer.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64));
+    if (!m_colorParamsUBuffer->create()) {
+        NEAPU_LOGE("Failed to create color params uniform buffer");
+        m_colorParamsUBuffer.reset();
+        throw std::runtime_error("Failed to create color params uniform buffer");
     }
+
     m_sampler.reset(m_rhi->newSampler(
         QRhiSampler::Linear,
         QRhiSampler::Linear,
@@ -102,29 +52,51 @@ bool Pipeline::create(const media::FramePtr& frame, QRhiRenderTarget* renderTarg
         QRhiSampler::ClampToEdge,
         QRhiSampler::ClampToEdge
     ));
-    if (!m_sampler->create()) {
-        NEAPU_LOGE("Failed to create sampler for YUV pipeline");
-        m_sampler.reset();
-        return false;
+}
+Pipeline::~Pipeline() = default;
+std::unique_ptr<Pipeline> Pipeline::makeFormFrame(const media::FramePtr& frame, const CreateParam& param)
+{
+    using enum media::Frame::PixelFormat;
+    try {
+        switch (frame->pixelFormat()) {
+        case YUV420P:
+            return std::make_unique<YuvPipeline>(param.rhi);
+        case D3D11Texture2D:
+#ifdef _WIN32
+            return std::make_unique<D3D11VAPipeline>(param.rhi, param.d3d11Device, param.d3d11DeviceContext);
+#endif
+        case Vaapi: {
+            auto vaDisplay = media::Player::instance().vaDisplay();
+            if (vaDisplay == nullptr || param.eglDisplay == nullptr) {
+                NEAPU_LOGE("VAAPI display or EGL display is null");
+                return nullptr;
+            }
+            return std::make_unique<VaapiPipeline>(param.rhi, vaDisplay, param.eglDisplay, frame->swFormat());
+        }
+        default:
+            NEAPU_LOGE("Unsupported pixel format: {}", static_cast<int>(frame->pixelFormat()));
+            return nullptr;
+        }
+    } catch (const std::exception& e) {
+        NEAPU_LOGE_STREAM << "Exception in creating pipeline: " << e.what();
+        return nullptr;
     }
-
-    if (frame) {
-        m_width = frame->width();
-        m_height = frame->height();
-    }
-
-    if (!createSrb()) {
+}
+bool Pipeline::initialize(QRhiRenderTarget* renderTarget, const QSize& size)
+{
+    if (!createSrb(size)) {
         NEAPU_LOGE("Failed to create shader resource bindings");
         return false;
     }
 
     return createPipeline(renderTarget);
 }
-QRhiGraphicsPipeline* Pipeline::getPipeline()
+
+QRhiGraphicsPipeline* Pipeline::getPipeline() const
 {
     return m_pipeline.get();
 }
-QRhiShaderResourceBindings* Pipeline::getSrb()
+QRhiShaderResourceBindings* Pipeline::getSrb() const
 {
     return m_srb.get();
 }
@@ -132,9 +104,13 @@ bool Pipeline::checkFormat(const media::FramePtr& frame) const
 {
     return frame->pixelFormat() == m_pixelFormat;
 }
-void Pipeline::updateVertexUniforms(QRhiResourceUpdateBatch* rub, const QSize& renderSize)
+void Pipeline::updateVertexUniforms(QRhiResourceUpdateBatch* rub, const QSize& renderSize, const QSize& frameSize)
 {
-    if (m_oldRenderSize == renderSize && m_oldFrameSize == QSize(m_width, m_height)) {
+    if (m_pixelFormat == media::Frame::PixelFormat::None) {
+        return;
+    }
+
+    if (m_oldRenderSize == renderSize && m_oldFrameSize == frameSize) {
         return;
     }
 
@@ -145,12 +121,12 @@ void Pipeline::updateVertexUniforms(QRhiResourceUpdateBatch* rub, const QSize& r
     float scaleX = 1.0f;
     float scaleY = 1.0f;
 
-    m_oldFrameSize = QSize(m_width, m_height);
+    m_oldFrameSize = frameSize;
     m_oldRenderSize = renderSize;
 
-    if (renderSize.width() > 0 && renderSize.height() > 0 && m_width > 0 && m_height > 0) {
+    if (renderSize.width() > 0 && renderSize.height() > 0 && frameSize.width() > 0 && frameSize.height() > 0) {
         const float winRatio = static_cast<float>(renderSize.width()) / static_cast<float>(renderSize.height());
-        const float videoRatio = static_cast<float>(m_width) / static_cast<float>(m_height);
+        const float videoRatio = static_cast<float>(frameSize.width()) / static_cast<float>(frameSize.height());
 
         if (winRatio > videoRatio) {
             // 窗口更宽，压缩 X 方向以适配高度
@@ -171,7 +147,7 @@ void Pipeline::updateVertexUniforms(QRhiResourceUpdateBatch* rub, const QSize& r
 
     rub->updateDynamicBuffer(m_vsUBuffer.get(), 0, 64, vertexMatrix.constData());
 }
-bool Pipeline::createSrb()
+bool Pipeline::createSrb(const QSize& size)
 {
     m_srb.reset(m_rhi->newShaderResourceBindings());
     m_srb->setBindings({

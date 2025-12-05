@@ -20,12 +20,27 @@ static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC s_glEGLImageTargetTexture2DOES = (PFN
 
 
 namespace view {
-VaapiPipeline::VaapiPipeline(QRhi* rhi, void* vaDisplay, void* eglDisplay)
-    : Pipeline(media::Frame::PixelFormat::Vaapi, rhi)
+VaapiPipeline::VaapiPipeline(QRhi* rhi, void* vaDisplay, void* eglDisplay, media::Frame::PixelFormat swFormat)
+    : Pipeline(rhi)
     , m_vaDisplay(vaDisplay)
     , m_eglDisplay(eglDisplay)
 {
     NEAPU_FUNC_TRACE;
+    m_swFormat = swFormat;
+    if (m_swFormat != media::Frame::PixelFormat::NV12 &&
+        m_swFormat != media::Frame::PixelFormat::P010) {
+        NEAPU_LOGE("Unsupported VAAPI software format: {}", static_cast<int>(m_swFormat));
+        throw std::runtime_error("Unsupported VAAPI software format");
+    }
+    m_pixelFormat = media::Frame::PixelFormat::Vaapi;
+
+    if (s_eglCreateImageKHR == nullptr ||
+        s_eglDestroyImageKHR == nullptr ||
+        s_glEGLImageTargetTexture2DOES == nullptr) {
+        NEAPU_LOGE("Failed to get EGL extension function pointers.");
+        throw std::runtime_error("Failed to get EGL extension function pointers.");
+    }
+
     auto* nativeHandles = reinterpret_cast<const QRhiGles2NativeHandles*>(m_rhi->nativeHandles());
     const auto* openglContext = static_cast<QOpenGLContext*>(nativeHandles->context);
     m_glFuncs = openglContext->functions();
@@ -34,23 +49,7 @@ VaapiPipeline::~VaapiPipeline()
 {
     NEAPU_FUNC_TRACE;
 }
-bool VaapiPipeline::create(const media::FramePtr& frame, QRhiRenderTarget* renderTarget)
-{
-    if (s_eglCreateImageKHR == nullptr ||
-        s_eglDestroyImageKHR == nullptr ||
-        s_glEGLImageTargetTexture2DOES == nullptr) {
-        qWarning() << "Failed to get EGL extension function pointers.";
-        return false;
-        }
-    m_swFormat = frame->swFormat();
-    if (m_swFormat != media::Frame::PixelFormat::NV12 &&
-        m_swFormat != media::Frame::PixelFormat::P010) {
-        NEAPU_LOGE("Unsupported VAAPI software format: {}", static_cast<int>(m_swFormat));
-        return false;
-    }
-    NEAPU_LOGI("Creating VAAPI pipeline for frame: {}x{}, swFormat={}", frame->width(), frame->height(), static_cast<int>(m_swFormat));
-    return Pipeline::create(frame, renderTarget);
-}
+
 void VaapiPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame)
 {
     VASurfaceID vaSurface = frame->vaapiSurfaceId();
@@ -163,12 +162,12 @@ void VaapiPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&
         close(primeDesc.objects[j].fd);
     }
 }
-bool VaapiPipeline::createSrb()
+bool VaapiPipeline::createSrb(const QSize& size)
 {
     NEAPU_FUNC_TRACE;
 
-    m_yTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(m_width, m_height), 1, QRhiTexture::Flags()));
-    m_uvTexture.reset(m_rhi->newTexture(QRhiTexture::RG8, QSize(m_width / 2, m_height / 2), 1, QRhiTexture::Flags()));
+    m_yTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(size.width(), size.height()), 1, QRhiTexture::Flags()));
+    m_uvTexture.reset(m_rhi->newTexture(QRhiTexture::RG8, QSize(size.width() / 2, size.height() / 2), 1, QRhiTexture::Flags()));
     if (m_yTexture->create() == false ||
         m_uvTexture->create() == false) {
         NEAPU_LOGE("Failed to create QRhiTextures for VAAPI SRB creation");

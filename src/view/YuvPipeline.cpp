@@ -7,8 +7,9 @@
 
 namespace view {
 YuvPipeline::YuvPipeline(QRhi* rhi)
-    : Pipeline(media::Frame::PixelFormat::YUV420P, rhi)
+    : Pipeline(rhi)
 {
+    m_pixelFormat = media::Frame::PixelFormat::YUV420P;
 }
 YuvPipeline::~YuvPipeline() = default;
 
@@ -19,20 +20,11 @@ void YuvPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& 
         return;
     }
 
-    if (m_width != frame->width() || m_height != frame->height()) {
-        m_width = frame->width();
-        m_height = frame->height();
-        if (!createSrb()) {
-            NEAPU_LOGE("Failed to recreate SRB for YUV pipeline");
-            return;
-        }
-    }
-
     // Y平面
     {
         int yDataSize = frame->lineSize(0) * frame->height();
         QRhiTextureSubresourceUploadDescription sub(frame->data(0), yDataSize);
-        sub.setSourceSize(QSize(m_width, m_height));
+        sub.setSourceSize(QSize(frame->width(), frame->height()));
         sub.setDataStride(frame->lineSize(0));
         QRhiTextureUploadEntry entry(0, 0, sub);
         QRhiTextureUploadDescription desc({entry});
@@ -43,7 +35,7 @@ void YuvPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& 
     {
         int uDataSize = frame->lineSize(1) * (frame->height() / 2);
         QRhiTextureSubresourceUploadDescription sub(frame->data(1), uDataSize);
-        sub.setSourceSize(QSize(m_width / 2, m_height / 2));
+        sub.setSourceSize(QSize(frame->width() / 2, frame->height() / 2));
         sub.setDataStride(frame->lineSize(1));
         QRhiTextureUploadEntry entry(0, 0, sub);
         QRhiTextureUploadDescription desc({entry});
@@ -54,7 +46,7 @@ void YuvPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& 
     {
         int vDataSize = frame->lineSize(2) * (frame->height() / 2);
         QRhiTextureSubresourceUploadDescription sub(frame->data(2), vDataSize);
-        sub.setSourceSize(QSize(m_width / 2, m_height / 2));
+        sub.setSourceSize(QSize(frame->width() / 2, frame->height() / 2));
         sub.setDataStride(frame->lineSize(2));
         QRhiTextureUploadEntry entry(0, 0, sub);
         QRhiTextureUploadDescription desc({entry});
@@ -63,7 +55,7 @@ void YuvPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& 
     
     // frame 在这里析构
 }
-bool YuvPipeline::createSrb()
+bool YuvPipeline::createSrb(const QSize& size)
 {
     NEAPU_FUNC_TRACE;
     
@@ -73,9 +65,9 @@ bool YuvPipeline::createSrb()
     m_vTexture.reset();
     
     // 创建新纹理
-    m_yTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(m_width, m_height), 1, QRhiTexture::Flags()));
-    m_uTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(m_width / 2, m_height / 2), 1, QRhiTexture::Flags()));
-    m_vTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(m_width / 2, m_height / 2), 1, QRhiTexture::Flags()));
+    m_yTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(size.width(), size.height()), 1, QRhiTexture::Flags()));
+    m_uTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(size.width() / 2, size.height() / 2), 1, QRhiTexture::Flags()));
+    m_vTexture.reset(m_rhi->newTexture(QRhiTexture::R8, QSize(size.width() / 2, size.height() / 2), 1, QRhiTexture::Flags()));
     if (!m_yTexture->create() || !m_uTexture->create() || !m_vTexture->create()) {
         NEAPU_LOGE("Failed to create YUV textures");
         m_yTexture.reset();

@@ -15,7 +15,7 @@ public:
     void updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame) override;
 
 protected:
-    bool createSrb() override;
+    bool createSrb(const QSize& size) override;
     QString getFragmentShaderName() override;
 
 protected:
