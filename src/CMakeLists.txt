@@ -13,18 +13,6 @@ qt_add_shaders(${EXE_NAME} "shaders"
         FILES
         shaders/video.vert
         shaders/none.frag
-        shaders/nv12_limited_bt601.frag
-        shaders/nv12_full_bt601.frag
-        shaders/nv12_limited_bt709.frag
-        shaders/nv12_full_bt709.frag
-        shaders/p010_limited_bt601.frag
-        shaders/p010_full_bt601.frag
-        shaders/p010_limited_bt709.frag
-        shaders/p010_full_bt709.frag
-        shaders/yuv420p_limited_bt601.frag
-        shaders/yuv420p_full_bt601.frag
-        shaders/yuv420p_limited_bt709.frag
-        shaders/yuv420p_full_bt709.frag
         shaders/nv12.frag
         shaders/p010.frag
         shaders/yuv420p.frag
