@@ -6,4 +6,4 @@ out/
 logs/
 *build*/
 bin/
-.trae/_codeql_detected_source_root
+.trae/
