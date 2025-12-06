@@ -174,7 +174,11 @@ void ControlWidget::createControlLayout(QBoxLayout* parentLayout)
 
     m_volumeSlider = new QSlider(Qt::Horizontal, this);
     m_volumeSlider->setFixedWidth(100);
+#ifdef __APPLE__
     m_volumeSlider->setFixedHeight(39);
+#else
+    m_volumeSlider->setFixedHeight(35);
+#endif
     m_volumeSlider->setMaximum(100);
     m_volumeSlider->setMinimum(0);
     m_volumeSlider->setValue(100);
@@ -182,7 +186,11 @@ void ControlWidget::createControlLayout(QBoxLayout* parentLayout)
 
     m_volumeLabel = new QLabel("100%", this);
     m_volumeLabel->setFixedWidth(40);
+#ifdef __APPLE__
     m_volumeLabel->setFixedHeight(32);
+#else
+    m_volumeLabel->setFixedHeight(33);
+#endif
     m_volumeLabel->setAlignment(Qt::AlignCenter);
     buttonsLayout->addWidget(m_volumeLabel);
 
