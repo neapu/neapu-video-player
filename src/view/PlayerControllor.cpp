@@ -57,6 +57,7 @@ void PlayerController::onOpen()
     param.swDecodeOnly = false;
 #elifdef __APPLE__
     // 使用 VideoToolbox 硬件解码 + Metal 零拷贝渲染
+    // macOS仅支持metal后端，不用判断rhi backend
     param.targetPixelFormat = media::Frame::PixelFormat::VideoToolbox;
     param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
     param.swDecodeOnly = false;
