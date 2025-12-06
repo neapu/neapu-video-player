@@ -9,6 +9,9 @@
 #include "YuvPipeline.h"
 #include "D3D11VAPipeline.h"
 #include "VaapiPipeline.h"
+#ifdef __APPLE__
+#include "MetalVTPipeline.h"
+#endif
 #include "../media/Player.h"
 
 namespace view {
@@ -75,6 +78,13 @@ std::unique_ptr<Pipeline> Pipeline::makeFormFrame(const media::FramePtr& frame, 
             return std::make_unique<VaapiPipeline>(param.rhi, vaDisplay, param.eglDisplay, frame->swFormat());
 #endif
         }
+        case CVPixelBuffer:
+#ifdef __APPLE__
+            return std::make_unique<MetalVTPipeline>(param.rhi, frame->swFormat());
+#else
+            NEAPU_LOGE("CVPixelBuffer format is only supported on macOS");
+            return nullptr;
+#endif
         default:
             NEAPU_LOGE("Unsupported pixel format: {}", static_cast<int>(frame->pixelFormat()));
             return nullptr;

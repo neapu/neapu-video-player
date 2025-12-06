@@ -236,6 +236,12 @@ FramePtr VideoDecoder::postProcess(FramePtr&& avFrame)
         return avFrame;
     }
 
+    // Skip software conversion for CVPixelBuffer frames (macOS VideoToolbox)
+    // These will be handled directly by the Metal pipeline for zero-copy rendering
+    if (avFrame->pixelFormat() == Frame::PixelFormat::CVPixelBuffer) {
+        return avFrame;
+    }
+
     FramePtr swFrame;
     if (avFrame->avFrame()->hw_frames_ctx) {
         swFrame = hwFrameTransfer(std::move(avFrame));

@@ -41,3 +41,16 @@ if (LINUX)
     target_include_directories(${LIB_NAME} PRIVATE ${LIBVA_INCLUDE_DIRS} ${LIBDRM_INCLUDE_DIRS} ${EGL_INCLUDE_DIRS})
     target_link_libraries(${LIB_NAME} PRIVATE ${LIBVA_LIBRARIES} ${LIBDRM_LIBRARIES} ${EGL_LIBRARIES})
 endif()
+
+if (APPLE)
+    message("Configuring for macOS")
+    target_sources(${LIB_NAME} PRIVATE
+        MetalVTPipeline.mm
+        MetalVTPipeline.h
+    )
+    target_link_libraries(${LIB_NAME} PRIVATE
+        "-framework CoreVideo"
+        "-framework Metal"
+        "-framework IOSurface"
+    )
+endif()
