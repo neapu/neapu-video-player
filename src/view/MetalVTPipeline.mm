@@ -88,9 +88,6 @@ void MetalVTPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePt
         CFRelease((CVMetalTextureRef)m_uvMetalTextureRef);
         m_uvMetalTextureRef = nullptr;
     }
-    
-    // Flush the texture cache to release old textures
-    CVMetalTextureCacheFlush(textureCache, 0);
 
     size_t width = CVPixelBufferGetWidth(pixelBuffer);
     size_t height = CVPixelBufferGetHeight(pixelBuffer);
@@ -164,13 +161,19 @@ void MetalVTPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePt
     nativeUVTex.object = reinterpret_cast<quint64>(uvTexture);
     nativeUVTex.layout = 0;
 
-    m_yTexture->createFrom(nativeYTex);
-    m_uvTexture->createFrom(nativeUVTex);
+    if (!m_yTexture->createFrom(nativeYTex) || !m_uvTexture->createFrom(nativeUVTex)) {
+        NEAPU_LOGE("Failed to create QRhiTexture from native Metal texture");
+        return;
+    }
 }
 
 bool MetalVTPipeline::createSrb(const QSize& size)
 {
     NEAPU_FUNC_TRACE;
+
+    // Reset existing textures if they exist
+    m_yTexture.reset();
+    m_uvTexture.reset();
 
     // Create QRhiTexture wrappers
     if (m_swFormat == media::Frame::PixelFormat::NV12) {

@@ -14,11 +14,11 @@ public:
     ~MetalVTPipeline() override;
 
     void updateTexture(QRhiResourceUpdateBatch* rub, media::FramePtr&& frame) override;
+
 protected:
     bool createSrb(const QSize& size) override;
     QString getFragmentShaderName() override;
 
-protected:
     std::unique_ptr<QRhiTexture> m_yTexture{};
     std::unique_ptr<QRhiTexture> m_uvTexture{};
 
