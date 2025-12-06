@@ -55,6 +55,10 @@ void PlayerController::onOpen()
     }
     param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
     param.swDecodeOnly = false;
+#elifdef __APPLE__
+    param.targetPixelFormat = media::Frame::PixelFormat::YUV420P;
+    param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
+    param.swDecodeOnly = false;
 #else
     param.targetPixelFormat = media::Frame::PixelFormat::YUV420P;
     param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
