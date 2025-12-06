@@ -1,7 +1,9 @@
 set(LIB_NAME "view")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Gui Widgets ShaderTools Concurrent)
-# find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+if(Qt6_VERSION VERSION_GREATER_EQUAL "6.9")
+    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+endif()
 
 qt_add_library(${LIB_NAME} STATIC
         MainWindow.cpp

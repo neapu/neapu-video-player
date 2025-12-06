@@ -14,6 +14,7 @@
 #include <mutex>
 #include <atomic>
 #include <expected>
+#include <thread>
 
 typedef struct AVStream AVStream;
 typedef struct AVFrame AVFrame;

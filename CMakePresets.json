@@ -44,6 +44,40 @@
       "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}/lib/cmake",
       "FFMPEG_DIR": "$env{FFMPEG_DIR}"
     }
+  }, {
+    "name": "MacOS-Debug",
+    "displayName": "MacOS Clang Debug",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/${presetName}",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_C_COMPILER": "clang",
+      "CMAKE_CXX_COMPILER": "clang++",
+      "CMAKE_OSX_ARCHITECTURES": "arm64",
+      "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}/lib/cmake"
+    },
+    "condition": {
+      "type": "equals",
+      "lhs": "${hostSystemName}",
+      "rhs": "Darwin"
+    }
+  }, {
+    "name": "MacOS-Release",
+    "displayName": "MacOS Clang Release",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/${presetName}",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_C_COMPILER": "clang",
+      "CMAKE_CXX_COMPILER": "clang++",
+      "CMAKE_OSX_ARCHITECTURES": "arm64",
+      "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}/lib/cmake"
+    },
+    "condition": {
+      "type": "equals",
+      "lhs": "${hostSystemName}",
+      "rhs": "Darwin"
+    }
   }],
   "buildPresets": [{
     "name": "Win64-MSVC-Debug",
@@ -63,5 +97,13 @@
     "name": "Linux-Release",
     "configurePreset": "Linux-Release",
     "displayName": "Build Linux GCC Release"
+  }, {
+    "name": "MacOS-Debug",
+    "configurePreset": "MacOS-Debug",
+    "displayName": "Build MacOS Clang Debug"
+  }, {
+    "name": "MacOS-Release",
+    "configurePreset": "MacOS-Release",
+    "displayName": "Build MacOS Clang Release"
   }]
 }

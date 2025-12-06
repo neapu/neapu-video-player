@@ -6,6 +6,7 @@
 #include <string>
 #include "Helper.h"
 #include <atomic>
+#include <thread>
 #include "Queue.h"
 
 typedef struct AVFormatContext AVFormatContext;

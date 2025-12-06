@@ -56,9 +56,9 @@ VideoDecoder::VideoDecoder(const CreateParam& param)
         throw std::runtime_error("Stream is null");
     }
 
-    DecoderBase::initializeContext();
+    initializeContext();
 
-    VideoDecoder::initializeHWContext();
+    initializeHWContext();
 
     int ret = avcodec_open2(m_codecCtx, m_codec, nullptr);
     if (ret < 0) {
