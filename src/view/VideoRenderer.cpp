@@ -197,12 +197,15 @@ void VideoRenderer::RenderFrame(QRhiCommandBuffer* cb)
 }
 void VideoRenderer::RenderEmpty(QRhiCommandBuffer* cb)
 {
-    m_pipeline.reset();
-    m_pipeline = std::make_unique<Pipeline>(m_rhi);
-    if (!m_pipeline->initialize(renderTarget())) {
-        NEAPU_LOGE("Failed to create pipeline resources for empty frame rendering");
+    if (!m_pipeline || m_pipeline->pixelFormat() != media::Frame::PixelFormat::None) {
+        NEAPU_LOGI("Creating pipeline for empty frame rendering");
         m_pipeline.reset();
-        return;
+        m_pipeline = std::make_unique<Pipeline>(m_rhi);
+        if (!m_pipeline->initialize(renderTarget())) {
+            NEAPU_LOGE("Failed to create pipeline resources for empty frame rendering");
+            m_pipeline.reset();
+            return;
+        }
     }
 
     auto rub = m_rhi->nextResourceUpdateBatch();

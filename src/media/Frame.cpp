@@ -127,6 +127,7 @@ Frame::PixelFormat Frame::pixelFormat() const
     case AV_PIX_FMT_P010: return PixelFormat::P010;
     case AV_PIX_FMT_D3D11: return PixelFormat::D3D11Texture2D;
     case AV_PIX_FMT_VAAPI: return PixelFormat::Vaapi;
+    case AV_PIX_FMT_VIDEOTOOLBOX: return PixelFormat::VideoToolbox;
     default: return PixelFormat::None;
     }
 }
@@ -199,6 +200,15 @@ int Frame::subresourceIndex() const
 unsigned int Frame::vaapiSurfaceId() const
 {
     return static_cast<unsigned int>(reinterpret_cast<uintptr_t>(m_avFrame->data[3]));
+}
+#endif
+
+#ifdef __APPLE__
+void* Frame::cvPixelBuffer() const
+{
+    if (!m_avFrame) return nullptr;
+    if (static_cast<AVPixelFormat>(m_avFrame->format) != AV_PIX_FMT_VIDEOTOOLBOX) return nullptr;
+    return m_avFrame->data[3];
 }
 #endif
 

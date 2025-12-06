@@ -48,6 +48,7 @@ public:
         P010,
         D3D11Texture2D,
         Vaapi,
+        VideoToolbox,
     };
     PixelFormat pixelFormat() const;
     enum class ColorSpace {
@@ -73,6 +74,10 @@ public:
 
 #ifdef __linux__
     unsigned int vaapiSurfaceId() const;
+#endif
+
+#ifdef __APPLE__
+    void* cvPixelBuffer() const;
 #endif
 
     // audio, 格式固定为S16LE

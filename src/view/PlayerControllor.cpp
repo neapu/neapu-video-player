@@ -56,7 +56,8 @@ void PlayerController::onOpen()
     param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
     param.swDecodeOnly = false;
 #elifdef __APPLE__
-    param.targetPixelFormat = media::Frame::PixelFormat::YUV420P;
+    // 使用 VideoToolbox 硬件解码 + Metal 零拷贝渲染
+    param.targetPixelFormat = media::Frame::PixelFormat::VideoToolbox;
     param.downgradePixelFormat = media::Frame::PixelFormat::YUV420P;
     param.swDecodeOnly = false;
 #else

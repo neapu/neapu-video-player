@@ -9,6 +9,7 @@
 #include "YuvPipeline.h"
 #include "D3D11VAPipeline.h"
 #include "VaapiPipeline.h"
+#include "MetalPipeline.h"
 #include "../media/Player.h"
 
 namespace view {
@@ -53,7 +54,10 @@ Pipeline::Pipeline(QRhi* rhi)
         QRhiSampler::ClampToEdge
     ));
 }
-Pipeline::~Pipeline() = default;
+Pipeline::~Pipeline()
+{
+    NEAPU_FUNC_TRACE;
+}
 std::unique_ptr<Pipeline> Pipeline::makeFormFrame(const media::FramePtr& frame, const CreateParam& param)
 {
     using enum media::Frame::PixelFormat;
@@ -73,6 +77,14 @@ std::unique_ptr<Pipeline> Pipeline::makeFormFrame(const media::FramePtr& frame, 
                 return nullptr;
             }
             return std::make_unique<VaapiPipeline>(param.rhi, vaDisplay, param.eglDisplay, frame->swFormat());
+#endif
+        }
+        case VideoToolbox: {
+#ifdef __APPLE__
+            return std::make_unique<MetalPipeline>(param.rhi, frame->swFormat());
+#else
+            NEAPU_LOGE("VideoToolbox is only supported on macOS");
+            return nullptr;
 #endif
         }
         default:
