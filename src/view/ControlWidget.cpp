@@ -172,24 +172,19 @@ void ControlWidget::createControlLayout(QBoxLayout* parentLayout)
     );
     buttonsLayout->addWidget(m_muteButton);
 
-    auto* offsetLayout = new QHBoxLayout();
-    offsetLayout->setContentsMargins(0, 3, 0, 0);
-    offsetLayout->setSpacing(3);
     m_volumeSlider = new QSlider(Qt::Horizontal, this);
     m_volumeSlider->setFixedWidth(100);
-    m_volumeSlider->setFixedHeight(36);
+    m_volumeSlider->setFixedHeight(39);
     m_volumeSlider->setMaximum(100);
     m_volumeSlider->setMinimum(0);
     m_volumeSlider->setValue(100);
-    offsetLayout->addWidget(m_volumeSlider);
+    buttonsLayout->addWidget(m_volumeSlider);
 
     m_volumeLabel = new QLabel("100%", this);
     m_volumeLabel->setFixedWidth(40);
-    m_volumeLabel->setFixedHeight(30);
+    m_volumeLabel->setFixedHeight(32);
     m_volumeLabel->setAlignment(Qt::AlignCenter);
-    offsetLayout->addWidget(m_volumeLabel);
-
-    buttonsLayout->addLayout(offsetLayout);
+    buttonsLayout->addWidget(m_volumeLabel);
 
     parentLayout->addLayout(buttonsLayout);
 
