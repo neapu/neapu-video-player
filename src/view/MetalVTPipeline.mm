@@ -54,6 +54,14 @@ MetalVTPipeline::MetalVTPipeline(QRhi* rhi, media::Frame::PixelFormat swFormat)
 MetalVTPipeline::~MetalVTPipeline()
 {
     NEAPU_FUNC_TRACE;
+    if (m_yMetalTextureRef) {
+        CFRelease((CVMetalTextureRef)m_yMetalTextureRef);
+        m_yMetalTextureRef = nullptr;
+    }
+    if (m_uvMetalTextureRef) {
+        CFRelease((CVMetalTextureRef)m_uvMetalTextureRef);
+        m_uvMetalTextureRef = nullptr;
+    }
     if (m_metalTextureCache) {
         CVMetalTextureCacheRef textureCache = (CVMetalTextureCacheRef)m_metalTextureCache;
         CFRelease(textureCache);
@@ -70,6 +78,16 @@ void MetalVTPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePt
     }
 
     CVMetalTextureCacheRef textureCache = (CVMetalTextureCacheRef)m_metalTextureCache;
+    
+    // Release old CVMetalTextureRef objects
+    if (m_yMetalTextureRef) {
+        CFRelease((CVMetalTextureRef)m_yMetalTextureRef);
+        m_yMetalTextureRef = nullptr;
+    }
+    if (m_uvMetalTextureRef) {
+        CFRelease((CVMetalTextureRef)m_uvMetalTextureRef);
+        m_uvMetalTextureRef = nullptr;
+    }
     
     // Flush the texture cache to release old textures
     CVMetalTextureCacheFlush(textureCache, 0);
@@ -133,6 +151,10 @@ void MetalVTPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePt
         return;
     }
 
+    // Store the CVMetalTextureRef to keep them alive
+    m_yMetalTextureRef = yTextureRef;
+    m_uvMetalTextureRef = uvTextureRef;
+
     // Update QRhiTexture with native Metal textures
     QRhiTexture::NativeTexture nativeYTex{};
     nativeYTex.object = reinterpret_cast<quint64>(yTexture);
@@ -144,10 +166,6 @@ void MetalVTPipeline::updateTexture(QRhiResourceUpdateBatch* rub, media::FramePt
 
     m_yTexture->createFrom(nativeYTex);
     m_uvTexture->createFrom(nativeUVTex);
-
-    // Clean up CVMetalTextureRef (but keep the MTLTexture alive through QRhi)
-    CFRelease(yTextureRef);
-    CFRelease(uvTextureRef);
 }
 
 bool MetalVTPipeline::createSrb(const QSize& size)

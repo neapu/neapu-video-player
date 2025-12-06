@@ -24,6 +24,8 @@ protected:
 
     void* m_metalDevice{ nullptr };
     void* m_metalTextureCache{ nullptr };  // CVMetalTextureCacheRef
+    void* m_yMetalTextureRef{ nullptr };   // CVMetalTextureRef
+    void* m_uvMetalTextureRef{ nullptr };  // CVMetalTextureRef
     media::Frame::PixelFormat m_swFormat{ media::Frame::PixelFormat::None };
 };
 
