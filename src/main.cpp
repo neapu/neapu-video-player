@@ -34,6 +34,8 @@ int main(int argc, char* argv[])
 #endif
     qInstallMessageHandler(qtMessageHandler);
 
+    NEAPU_LOGI_STREAM << "Qt version: " << QT_VERSION_STR;
+
     QApplication app(argc, argv);
 
     view::MainWindow w;

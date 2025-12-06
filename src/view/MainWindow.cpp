@@ -16,14 +16,16 @@
 namespace view {
 MainWindow::MainWindow()
 {
-    resize(800, 600);
-    setMinimumSize(800, 600);
-
     m_settings = new QSettings("NeapuVideoPlayer.ini", QSettings::IniFormat, this);
+
+    // 坑点，在macos中必须先创建VideoRenderer，再执行resize和创建菜单等操作
+    // 否则会导致QRhi初始化失败，现象为报错：QRhiWidget: No QRhi，并且窗口无法显示
+    createLayout();
 
     createMenus();
 
-    createLayout();
+    resize(800, 600);
+    setMinimumSize(800, 600);
 
     connect(m_playerController, &PlayerController::fileNameChanged, this, [this](const QString& fileName) {
         if (fileName.isEmpty()) {
